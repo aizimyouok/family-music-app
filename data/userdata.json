@@ -1,0 +1,33 @@
+{
+  "userSongs": [],
+  "playlists": [
+    {
+      "id": "all",
+      "name": "전체 곡",
+      "description": "모든 음악",
+      "songIds": [],
+      "createdAt": "2025-07-22T00:00:00Z"
+    },
+    {
+      "id": "favorites",
+      "name": "즐겨찾기",
+      "description": "좋아하는 음악 모음",
+      "songIds": [],
+      "createdAt": "2025-07-22T00:00:00Z"
+    },
+    {
+      "id": "recent",
+      "name": "최근 추가",
+      "description": "최근에 추가된 음악",
+      "songIds": [],
+      "createdAt": "2025-07-22T00:00:00Z"
+    }
+  ],
+  "settings": {
+    "defaultVolume": 70,
+    "autoPlay": true,
+    "shuffle": false,
+    "repeat": "none"
+  },
+  "lastUpdated": "2025-07-22T00:00:00Z"
+}

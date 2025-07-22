@@ -1,0 +1,26 @@
+[
+  {
+    "id": "iu_001",
+    "title": "좋은 날",
+    "artist": "아이유",
+    "youtubeId": "jeqdYqsrsA0",
+    "duration": 237,
+    "album": "Real",
+    "year": 2010,
+    "genre": "K-pop",
+    "addedAt": "2025-01-01T00:00:00Z",
+    "isDefault": true
+  },
+  {
+    "id": "iu_002",
+    "title": "strawberry moon",
+    "artist": "아이유",
+    "youtubeId": "sqgxcCjD04s",
+    "duration": 217,
+    "album": "Single",
+    "year": 2021,
+    "genre": "K-pop",
+    "addedAt": "2025-01-01T00:00:00Z",
+    "isDefault": true
+  }
+]

@@ -1,0 +1,42 @@
+{
+  "artists": [
+    {
+      "id": "iu",
+      "name": "아이유",
+      "englishName": "IU",
+      "genre": "K-pop",
+      "debut": "2008",
+      "agency": "EDAM Entertainment",
+      "description": "대한민국의 가수, 작사가, 작곡가, 배우",
+      "avatar": "https://img.youtube.com/vi/jeqdYqsrsA0/maxresdefault.jpg",
+      "songCount": 2,
+      "folder": "아이유"
+    },
+    {
+      "id": "bts",
+      "name": "BTS",
+      "englishName": "BTS",
+      "genre": "K-pop",
+      "debut": "2013",
+      "agency": "HYBE Corporation",
+      "description": "대한민국의 7인조 남성 아이돌 그룹",
+      "avatar": "https://img.youtube.com/vi/gdZLi9oWNZg/maxresdefault.jpg",
+      "songCount": 2,
+      "folder": "BTS"
+    },
+    {
+      "id": "newjeans",
+      "name": "NewJeans",
+      "englishName": "NewJeans",
+      "genre": "K-pop",
+      "debut": "2022",
+      "agency": "ADOR",
+      "description": "대한민국의 5인조 여성 아이돌 그룹",
+      "avatar": "https://img.youtube.com/vi/js1CtxSY38I/maxresdefault.jpg",
+      "songCount": 2,
+      "folder": "NewJeans"
+    }
+  ],
+  "lastUpdated": "2025-07-22T00:00:00Z",
+  "version": "1.0.0"
+}

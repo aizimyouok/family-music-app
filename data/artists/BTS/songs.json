@@ -1,0 +1,26 @@
+[
+  {
+    "id": "bts_001",
+    "title": "Dynamite",
+    "artist": "BTS",
+    "youtubeId": "gdZLi9oWNZg",
+    "duration": 199,
+    "album": "BE",
+    "year": 2020,
+    "genre": "K-pop",
+    "addedAt": "2025-01-01T00:00:00Z",
+    "isDefault": true
+  },
+  {
+    "id": "bts_002",
+    "title": "Butter",
+    "artist": "BTS",
+    "youtubeId": "WMweEpGlu_U",
+    "duration": 164,
+    "album": "Single",
+    "year": 2021,
+    "genre": "K-pop",
+    "addedAt": "2025-01-01T00:00:00Z",
+    "isDefault": true
+  }
+]

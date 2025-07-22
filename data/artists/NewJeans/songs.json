@@ -1,0 +1,26 @@
+[
+  {
+    "id": "nj_001",
+    "title": "Attention",
+    "artist": "NewJeans",
+    "youtubeId": "js1CtxSY38I",
+    "duration": 180,
+    "album": "NewJeans",
+    "year": 2022,
+    "genre": "K-pop",
+    "addedAt": "2025-01-01T00:00:00Z",
+    "isDefault": true
+  },
+  {
+    "id": "nj_002",
+    "title": "Hype Boy",
+    "artist": "NewJeans",
+    "youtubeId": "11cta61wi0g",
+    "duration": 189,
+    "album": "NewJeans",
+    "year": 2022,
+    "genre": "K-pop",
+    "addedAt": "2025-01-01T00:00:00Z",
+    "isDefault": true
+  }
+]
