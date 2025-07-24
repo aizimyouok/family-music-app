@@ -6,6 +6,11 @@
 ![Vite](https://img.shields.io/badge/Vite-7.0.4-purple?logo=vite)
 ![GitHub](https://img.shields.io/badge/Data-GitHub-green?logo=github)
 
+## 🌐 **온라인 데모**
+**👉 [가족 음악 앱 바로 사용하기](https://aizimyouok.github.io/family-music-app/)**
+
+*GitHub Pages로 배포된 실제 앱을 바로 사용할 수 있습니다!*
+
 ---
 
 ## 📋 **프로젝트 개요**
@@ -66,6 +71,28 @@ family-music-app/
 
 ## 🚀 **설치 및 실행**
 
+### ⚡ **가장 쉬운 실행 방법**
+
+#### **방법 1: 더블클릭으로 실행**
+```
+📂 run_app.bat 더블클릭
+```
+- 개발 모드 또는 빌드된 앱 선택 가능
+
+#### **방법 2: 간단한 웹 서버**
+```
+📂 run_simple_server.bat 더블클릭
+```
+- Python 웹 서버로 실행 (http://localhost:8000)
+
+#### **방법 3: Node.js 서버**
+```
+📂 run_node_server.bat 더블클릭
+```
+- Node.js serve로 실행 (http://localhost:3000)
+
+### 🔧 **개발자용 명령어**
+
 ```bash
 # 1. 프로젝트 클론
 git clone https://github.com/aizimyouok/family-music-app.git
@@ -77,8 +104,11 @@ npm install
 # 3. 개발 서버 실행
 npm run dev
 
-# 4. 브라우저에서 접속
-# http://localhost:5173
+# 4. 빌드된 앱 실행
+npm run preview
+
+# 5. 프로덕션 빌드
+npm run build
 ```
 
 ---
@@ -292,6 +322,27 @@ npm run build
 3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the Branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
+
+---
+
+## 🌐 **GitHub Pages 배포 방법**
+
+### 🚀 **자동 배포 (권장)**
+1. **저장소 푸시**: `main` 브랜치에 코드 푸시
+2. **자동 빌드**: GitHub Actions가 자동으로 빌드 및 배포
+3. **접속**: https://aizimyouok.github.io/family-music-app/
+
+### 🔧 **수동 배포**
+```bash
+npm run build
+npm run deploy  # gh-pages 패키지 사용
+```
+
+### ⚙️ **GitHub Pages 설정**
+1. GitHub 저장소 → **Settings** → **Pages**
+2. **Source**: Deploy from a branch
+3. **Branch**: `gh-pages` 선택
+4. **Root** 폴더 선택
 
 ---
 
