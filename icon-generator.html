@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Icon Generator</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        .icon-canvas { border: 1px solid #ccc; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>🎵 Music Hub Icons</h1>
+    
+    <div>
+        <h3>192x192 Icon</h3>
+        <canvas id="icon192" width="192" height="192" class="icon-canvas"></canvas>
+    </div>
+    
+    <div>
+        <h3>512x512 Icon</h3>
+        <canvas id="icon512" width="512" height="512" class="icon-canvas"></canvas>
+    </div>
+    
+    <div>
+        <button onclick="downloadIcons()">Download Icons</button>
+    </div>
+
+    <script>
+        function createIcon(canvas, size) {
+            const ctx = canvas.getContext('2d');
+            
+            // 배경 그라데이션
+            const gradient = ctx.createLinearGradient(0, 0, size, size);
+            gradient.addColorStop(0, '#3b82f6');
+            gradient.addColorStop(0.5, '#8b5cf6');
+            gradient.addColorStop(1, '#ec4899');
+            
+            // 둥근 배경
+            const radius = size * 0.25;
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.roundRect(0, 0, size, size, radius);
+            ctx.fill();
+            
+            // 음표 그리기
+            ctx.fillStyle = 'white';
+            ctx.font = `bold ${size * 0.4}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🎵', size/2, size/2);
+        }
+
+        function downloadCanvas(canvas, filename) {
+            const link = document.createElement('a');
+            link.download = filename;
+            link.href = canvas.toDataURL();
+            link.click();
+        }
+
+        function downloadIcons() {
+            const canvas192 = document.getElementById('icon192');
+            const canvas512 = document.getElementById('icon512');
+            
+            createIcon(canvas192, 192);
+            createIcon(canvas512, 512);
+            
+            setTimeout(() => downloadCanvas(canvas192, 'pwa-192x192.png'), 100);
+            setTimeout(() => downloadCanvas(canvas512, 'pwa-512x512.png'), 200);
+        }
+        
+        // 페이지 로드시 아이콘 생성
+        window.onload = function() {
+            createIcon(document.getElementById('icon192'), 192);
+            createIcon(document.getElementById('icon512'), 512);
+        };
+    </script>
+</body>
+</html>
