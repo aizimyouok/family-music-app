@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>PWA Icon Generator</title>
+</head>
+<body>
+    <h1>🎵 Music Hub PWA 아이콘 생성기</h1>
+    <p>아래 버튼을 클릭해서 PWA 아이콘들을 다운로드하세요:</p>
+    
+    <canvas id="canvas192" width="192" height="192" style="border: 1px solid #ccc; margin: 10px;"></canvas>
+    <canvas id="canvas512" width="512" height="512" style="border: 1px solid #ccc; margin: 10px;"></canvas>
+    
+    <br>
+    <button onclick="generateAndDownload()">🎵 아이콘 생성 및 다운로드</button>
+    
+    <script>
+        function drawIcon(canvas, size) {
+            const ctx = canvas.getContext('2d');
+            
+            // 배경 그라데이션
+            const gradient = ctx.createLinearGradient(0, 0, size, size);
+            gradient.addColorStop(0, '#3b82f6');
+            gradient.addColorStop(0.5, '#8b5cf6');
+            gradient.addColorStop(1, '#ec4899');
+            
+            // 둥근 배경
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.roundRect(0, 0, size, size, size * 0.25);
+            ctx.fill();
+            
+            // 음표 그리기
+            ctx.fillStyle = 'white';
+            ctx.font = `bold ${size * 0.3}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🎵', size/2, size/2);
+        }
+        
+        function downloadCanvas(canvas, filename) {
+            const link = document.createElement('a');
+            link.download = filename;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        }
+        
+        function generateAndDownload() {
+            const canvas192 = document.getElementById('canvas192');
+            const canvas512 = document.getElementById('canvas512');
+            
+            drawIcon(canvas192, 192);
+            drawIcon(canvas512, 512);
+            
+            setTimeout(() => downloadCanvas(canvas192, 'pwa-192x192.png'), 100);
+            setTimeout(() => downloadCanvas(canvas512, 'pwa-512x512.png'), 500);
+            
+            alert('아이콘 파일들이 다운로드됩니다!\n\n다운로드된 파일들을:\n1. pwa-192x192.png\n2. pwa-512x512.png\n\n프로젝트의 public 폴더에 넣어주세요.');
+        }
+        
+        // 페이지 로드시 미리보기
+        window.onload = function() {
+            drawIcon(document.getElementById('canvas192'), 192);
+            drawIcon(document.getElementById('canvas512'), 512);
+        };
+    </script>
+</body>
+</html>
