@@ -17,8 +17,8 @@ export default defineConfig({
         background_color: '#0a0a0a',
         display: 'standalone',
         orientation: 'portrait-primary',
-        scope: '/',
-        start_url: '/',
+        scope: '/family-music-app/',
+        start_url: '/family-music-app/',
         icons: [
           {
             src: 'icon.svg',
