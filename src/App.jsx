@@ -1,10 +1,10 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import YouTube from 'react-youtube';
 import { 
   Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, RepeatOnce, 
   SpeakerHigh, Plus, Link, Cloud, CloudSlash, PencilSimple, Trash, 
   Check, X, Folder, MusicNote, Gear, User, UserGear, Key, FolderPlus,
-  ArrowRight, Database, Warning
+  ArrowRight, Database, Warning, ArrowClockwise
 } from "phosphor-react";
 import "./App.css";
 
@@ -74,8 +74,21 @@ function App() {
   const [showSongEditDialog, setShowSongEditDialog] = useState(false);
   const [editingSong, setEditingSong] = useState(null);
   
+  // 새로 추가된 상태들
+  const [draggedSong, setDraggedSong] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
+  const [isBottomSheetOpen, setIsBottomSheetOpen] = useState(false);
+  const [touchStart, setTouchStart] = useState(null);
+  const [touchEnd, setTouchEnd] = useState(null);
+  const [swipeDirection, setSwipeDirection] = useState(null);
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isPullToRefresh, setIsPullToRefresh] = useState(false);
+  const [showSkeletonUI, setShowSkeletonUI] = useState(false);
+  
   const playerRef = useRef(null);
   const progressInterval = useRef(null);
+  const musicListRef = useRef(null);
+  const bottomSheetRef = useRef(null);
 
   const initializeApp = async () => {
     setLoading(true);
@@ -90,9 +103,297 @@ function App() {
     await loadAllData();
   };
 
+  // 키보드 단축키 처리 - 의존성 최소화
+  const handleKeyPress = useCallback((e) => {
+    // 입력 필드에서 타이핑 중일 때는 단축키 비활성화
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+      return;
+    }
+    
+    switch (e.code) {
+      case 'Space':
+        e.preventDefault();
+        // 현재 상태를 실시간으로 가져와서 사용
+        setIsPlaying(currentIsPlaying => {
+          if (currentIsPlaying) {
+            if (playerRef.current) playerRef.current.pauseVideo();
+          } else {
+            if (playerRef.current) playerRef.current.playVideo();
+          }
+          return currentIsPlaying; // 상태는 실제로 변경하지 않음 (YouTube API가 처리)
+        });
+        break;
+      case 'ArrowRight':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          // nextSong 로직 간소화
+          setCurrentIndex(prevIndex => {
+            setCurrentPlaylist(currentList => {
+              if (currentList.length === 0) return currentList;
+              const nextIndex = (prevIndex + 1) % currentList.length;
+              if (currentList[nextIndex]) {
+                const song = currentList[nextIndex];
+                setCurrentMusic(song);
+                if (playerRef.current) {
+                  setTimeout(() => {
+                    playerRef.current.loadVideoById(song.youtubeId);
+                    setTimeout(() => playerRef.current?.playVideo(), 2000);
+                  }, 100);
+                }
+              }
+              return currentList;
+            });
+            return (prevIndex + 1) % (currentPlaylist.length || 1);
+          });
+        }
+        break;
+      case 'ArrowLeft':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          // prevSong 로직 간소화
+          setCurrentIndex(prevIndex => {
+            setCurrentPlaylist(currentList => {
+              if (currentList.length === 0) return currentList;
+              const newPrevIndex = (prevIndex - 1 + currentList.length) % currentList.length;
+              if (currentList[newPrevIndex]) {
+                const song = currentList[newPrevIndex];
+                setCurrentMusic(song);
+                if (playerRef.current) {
+                  setTimeout(() => {
+                    playerRef.current.loadVideoById(song.youtubeId);
+                    setTimeout(() => playerRef.current?.playVideo(), 2000);
+                  }, 100);
+                }
+              }
+              return currentList;
+            });
+            return Math.max(0, (prevIndex - 1 + (currentPlaylist.length || 1)) % (currentPlaylist.length || 1));
+          });
+        }
+        break;
+      case 'ArrowUp':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          setVolume(prevVolume => {
+            const newVolume = Math.min(100, prevVolume + 10);
+            if (playerRef.current) playerRef.current.setVolume(newVolume);
+            return newVolume;
+          });
+        }
+        break;
+      case 'ArrowDown':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          setVolume(prevVolume => {
+            const newVolume = Math.max(0, prevVolume - 10);
+            if (playerRef.current) playerRef.current.setVolume(newVolume);
+            return newVolume;
+          });
+        }
+        break;
+      case 'KeyS':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          setIsShuffle(prev => !prev);
+        }
+        break;
+      case 'KeyR':
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          setRepeatMode(prevMode => {
+            const modes = ['none', 'all', 'one'];
+            return modes[(modes.indexOf(prevMode) + 1) % modes.length];
+          });
+        }
+        break;
+    }
+  }, []); // 의존성 배열을 비워서 한 번만 생성
+
+  // 터치/스와이프 제스처 처리
+  const handleTouchStart = (e) => {
+    setTouchEnd(null);
+    setTouchStart({
+      x: e.targetTouches[0].clientX,
+      y: e.targetTouches[0].clientY,
+      time: Date.now()
+    });
+  };
+
+  const handleTouchMove = (e) => {
+    if (!touchStart) return;
+    
+    const currentTouch = {
+      x: e.targetTouches[0].clientX,
+      y: e.targetTouches[0].clientY
+    };
+    
+    const deltaX = currentTouch.x - touchStart.x;
+    const deltaY = currentTouch.y - touchStart.y;
+    
+    // Pull to refresh 감지
+    if (deltaY > 0 && Math.abs(deltaX) < 50 && window.scrollY === 0) {
+      const distance = Math.min(deltaY, 100);
+      setPullDistance(distance);
+      
+      if (distance > 60 && !isPullToRefresh) {
+        setIsPullToRefresh(true);
+        navigator.vibrate && navigator.vibrate(50); // 햅틱 피드백
+      }
+    }
+    
+    setTouchEnd(currentTouch);
+  };
+
+  const handleTouchEnd = () => {
+    if (!touchStart || !touchEnd) return;
+    
+    const deltaX = touchEnd.x - touchStart.x;
+    const deltaY = touchEnd.y - touchStart.y;
+    const deltaTime = Date.now() - touchStart.time;
+    
+    // Pull to refresh 실행
+    if (isPullToRefresh && pullDistance > 60) {
+      handlePullToRefresh();
+    }
+    
+    // 스와이프 제스처 감지 (빠른 스와이프만)
+    if (deltaTime < 300 && Math.abs(deltaX) > 100 && Math.abs(deltaY) < 80) {
+      if (deltaX > 0) {
+        // 오른쪽 스와이프 - 이전 곡
+        setSwipeDirection('right');
+        // 간단한 이전 곡 로직
+        setCurrentIndex(prevIndex => {
+          setCurrentPlaylist(currentList => {
+            if (currentList.length > 0) {
+              const prevIdx = (prevIndex - 1 + currentList.length) % currentList.length;
+              const song = currentList[prevIdx];
+              if (song) {
+                setCurrentMusic(song);
+                if (playerRef.current) {
+                  setTimeout(() => {
+                    playerRef.current.loadVideoById(song.youtubeId);
+                    setTimeout(() => playerRef.current?.playVideo(), 2000);
+                  }, 100);
+                }
+              }
+            }
+            return currentList;
+          });
+          return Math.max(0, (prevIndex - 1 + (currentPlaylist.length || 1)) % (currentPlaylist.length || 1));
+        });
+        setTimeout(() => setSwipeDirection(null), 500);
+      } else {
+        // 왼쪽 스와이프 - 다음 곡
+        setSwipeDirection('left');
+        // 간단한 다음 곡 로직
+        setCurrentIndex(prevIndex => {
+          setCurrentPlaylist(currentList => {
+            if (currentList.length > 0) {
+              const nextIndex = (prevIndex + 1) % currentList.length;
+              const song = currentList[nextIndex];
+              if (song) {
+                setCurrentMusic(song);
+                if (playerRef.current) {
+                  setTimeout(() => {
+                    playerRef.current.loadVideoById(song.youtubeId);
+                    setTimeout(() => playerRef.current?.playVideo(), 2000);
+                  }, 100);
+                }
+              }
+            }
+            return currentList;
+          });
+          return (prevIndex + 1) % (currentPlaylist.length || 1);
+        });
+        setTimeout(() => setSwipeDirection(null), 500);
+      }
+    }
+    
+    // 상태 리셋
+    setPullDistance(0);
+    setIsPullToRefresh(false);
+    setTouchStart(null);
+    setTouchEnd(null);
+  };
+
+  // Pull to refresh 핸들러
+  const handlePullToRefresh = async () => {
+    setShowSkeletonUI(true);
+    await loadAllData();
+    setTimeout(() => setShowSkeletonUI(false), 800); // 사용자가 볼 수 있도록 약간의 딜레이
+  };
+
+  // 드래그 앤 드롭 핸들러들
+  const handleDragStart = (e, song, index) => {
+    if (!isAdminMode) return;
+    
+    setDraggedSong({ song, index });
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/html', e.target.outerHTML);
+    
+    // 드래그 이미지 커스터마이징
+    const dragImage = e.target.cloneNode(true);
+    dragImage.classList.add('drag-ghost');
+    document.body.appendChild(dragImage);
+    e.dataTransfer.setDragImage(dragImage, e.target.offsetWidth / 2, e.target.offsetHeight / 2);
+    setTimeout(() => document.body.removeChild(dragImage), 0);
+  };
+
+  const handleDragOver = (e, index) => {
+    if (!draggedSong) return;
+    
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverIndex(index);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverIndex(null);
+  };
+
+  const handleDrop = (e, dropIndex) => {
+    e.preventDefault();
+    
+    if (!draggedSong || draggedSong.index === dropIndex) {
+      setDraggedSong(null);
+      setDragOverIndex(null);
+      return;
+    }
+    
+    // 배열 순서 변경
+    const newPlaylist = [...currentPlaylist];
+    const [removed] = newPlaylist.splice(draggedSong.index, 1);
+    newPlaylist.splice(dropIndex, 0, removed);
+    
+    setCurrentPlaylist(newPlaylist);
+    
+    // 현재 재생 중인 곡의 인덱스 업데이트
+    if (currentMusic) {
+      const newCurrentIndex = newPlaylist.findIndex(song => song.id === currentMusic.id);
+      setCurrentIndex(newCurrentIndex);
+    }
+    
+    setDraggedSong(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedSong(null);
+    setDragOverIndex(null);
+  };
+
   useEffect(() => {
     initializeApp();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 키보드 이벤트 리스너를 별도의 useEffect로 분리
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyPress);
+    
+    return () => {
+      document.removeEventListener('keydown', handleKeyPress);
+    };
+  }, [handleKeyPress]);
 
   const loadAllData = async () => {
     try {
@@ -1064,10 +1365,78 @@ function App() {
     return `${minutes}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
+  // 진행바 CSS 변수 업데이트
+  const updateProgressBar = () => {
+    const progressPercentage = duration > 0 ? (currentTime / duration) * 100 : 0;
+    const progressBar = document.querySelector('.progress-bar');
+    if (progressBar) {
+      progressBar.style.setProperty('--progress', `${progressPercentage}%`);
+    }
+  };
+
+  // currentTime이 변경될 때마다 진행바 업데이트
+  useEffect(() => {
+    updateProgressBar();
+  }, [currentTime, duration]);
+
   const filteredMusic = currentPlaylist.filter(song => 
     song.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
     song.artist.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  // 모바일 감지
+  const isMobile = () => {
+    return window.innerWidth <= 768;
+  };
+
+  // Bottom Sheet 핸들러들
+  const openBottomSheet = () => {
+    if (isMobile()) {
+      setIsBottomSheetOpen(true);
+      document.body.style.overflow = 'hidden';
+    }
+  };
+
+  const closeBottomSheet = () => {
+    setIsBottomSheetOpen(false);
+    document.body.style.overflow = 'auto';
+  };
+
+  // Bottom Sheet 드래그 핸들러
+  const handleBottomSheetDrag = (e) => {
+    const touch = e.touches[0];
+    const sheet = bottomSheetRef.current;
+    if (!sheet) return;
+
+    const startY = touch.clientY;
+    const sheetHeight = sheet.offsetHeight;
+    
+    const handleMove = (moveEvent) => {
+      const currentY = moveEvent.touches[0].clientY;
+      const diff = currentY - startY;
+      
+      if (diff > 0) {
+        sheet.style.transform = `translateY(${diff}px)`;
+      }
+    };
+    
+    const handleEnd = (endEvent) => {
+      const endY = endEvent.changedTouches[0].clientY;
+      const diff = endY - startY;
+      
+      if (diff > sheetHeight * 0.3) {
+        closeBottomSheet();
+      } else {
+        sheet.style.transform = 'translateY(0)';
+      }
+      
+      document.removeEventListener('touchmove', handleMove);
+      document.removeEventListener('touchend', handleEnd);
+    };
+    
+    document.addEventListener('touchmove', handleMove);
+    document.addEventListener('touchend', handleEnd);
+  };
 
   const CloudStatusIcon = () => {
     switch(cloudStatus) {
@@ -1077,6 +1446,25 @@ function App() {
       default: return <CloudSlash size={16} style={{ color: '#6b7280' }} title="오프라인 모드" />;
     }
   };
+
+  // Skeleton UI 컴포넌트
+  const SkeletonCard = () => (
+    <div className="skeleton-card">
+      <div className="skeleton-artwork"></div>
+      <div className="skeleton-text">
+        <div className="skeleton-title"></div>
+        <div className="skeleton-artist"></div>
+      </div>
+    </div>
+  );
+
+  const SkeletonUI = () => (
+    <div className="skeleton-container">
+      {[...Array(8)].map((_, index) => (
+        <SkeletonCard key={index} />
+      ))}
+    </div>
+  );
 
   return (
     <div className="container">
@@ -1336,8 +1724,38 @@ function App() {
         <YouTube videoId={currentMusic?.youtubeId || ''} opts={youtubeOpts} onReady={onPlayerReady} onStateChange={onPlayerStateChange} />
       </div>
 
-      <main className="main-layout">
-        <div className="playlist-section">
+      <main className="main-layout"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        {/* Pull to refresh 인디케이터 */}
+        <div 
+          className={`pull-indicator ${isPullToRefresh ? 'active' : ''}`}
+          style={{
+            transform: `translateY(${Math.min(pullDistance - 20, 40)}px)`,
+            opacity: pullDistance > 20 ? 1 : pullDistance > 10 ? 0.5 : 0
+          }}
+        >
+          <ArrowClockwise size={16} />
+          <span>{isPullToRefresh ? '놓으면 새로고침' : '당겨서 새로고침'}</span>
+        </div>
+
+        {/* 스와이프 방향 표시 */}
+        {swipeDirection && (
+          <>
+            <div className={`swipe-indicator left ${swipeDirection === 'right' ? 'active' : ''}`}>
+              ⏮️
+            </div>
+            <div className={`swipe-indicator right ${swipeDirection === 'left' ? 'active' : ''}`}>
+              ⏭️
+            </div>
+          </>
+        )}
+
+        <div className="playlist-section"
+          ref={musicListRef}
+        >
           <div style={{ marginBottom: '1rem' }}>
             {/* 폴더와 검색창을 한 줄에 배치 */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
@@ -1497,13 +1915,23 @@ function App() {
           )}
 
           <div className="music-list">
-            {loading ? (
-              <div className="loading"><div className="loader"></div><p>음악 목록을 불러오는 중...</p></div>
+            {loading || showSkeletonUI ? (
+              <SkeletonUI />
             ) : filteredMusic.length === 0 ? (
               <div className="no-results"><p>🔍 검색 결과가 없습니다.</p></div>
             ) : (
               filteredMusic.map((song, index) => (
-                <div key={song.id} className={`song-item ${currentMusic?.id === song.id ? 'playing' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <div 
+                  key={song.id} 
+                  className={`song-item ${currentMusic?.id === song.id ? 'playing' : ''} ${draggedSong?.index === index ? 'dragging' : ''} ${dragOverIndex === index ? 'drag-over' : ''}`} 
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                  draggable={isAdminMode}
+                  onDragStart={(e) => handleDragStart(e, song, index)}
+                  onDragOver={(e) => handleDragOver(e, index)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={(e) => handleDrop(e, index)}
+                  onDragEnd={handleDragEnd}
+                >
                   
                   {/* 선택 재생용 체크박스 (모든 모드에서 표시) */}
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
