@@ -11,6 +11,24 @@ import "./App.css";
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzGHGhffnSVRktxNzvb5Yo4FWgQ99z2FbNLz9v80eVMd7qVyPTJUtWo3YURzLQ4Z77f/exec';
 const ADMIN_PASSWORD_KEY = 'family_music_admin_password';
 
+// YouTube Data API v3 키 (개발용 - 실제 배포시에는 서버리스 함수로 보호 필요)
+// 🔑 여기에 본인의 YouTube API 키를 입력하세요
+const YOUTUBE_API_KEY = 'YOUR_YOUTUBE_API_KEY_HERE';
+
+// 폴더 색상 팔레트
+const FOLDER_COLORS = [
+  '#3b82f6', // 파란색
+  '#10b981', // 녹색
+  '#f59e0b', // 주황색  
+  '#ef4444', // 빨간색
+  '#8b5cf6', // 보라색
+  '#06b6d4', // 시안색
+  '#84cc16', // 라임색
+  '#f97316', // 오렌지색
+  '#ec4899', // 핑크색
+  '#6366f1', // 인디고색
+];
+
 function App() {
   const [musicList, setMusicList] = useState([]);
   const [folderList, setFolderList] = useState([]);
@@ -49,6 +67,10 @@ function App() {
   const [selectedSongs, setSelectedSongs] = useState(new Set());
   const [showMoveDialog, setShowMoveDialog] = useState(false);
   const [targetFolder, setTargetFolder] = useState('');
+  
+  // 선택 재생 관련 상태 (일반 모드에서도 사용)
+  const [selectedSongsForPlay, setSelectedSongsForPlay] = useState(new Set());
+  const [isSelectivePlayMode, setIsSelectivePlayMode] = useState(false); // 선택 재생 모드인지
   const [showSongEditDialog, setShowSongEditDialog] = useState(false);
   const [editingSong, setEditingSong] = useState(null);
   
@@ -203,9 +225,7 @@ function App() {
 
   const getDefaultFolders = () => [
     { id: 'all', name: '전체', description: '모든 음악', color: '#6b7280', createdAt: new Date().toISOString(), createdBy: 'System', songCount: 0 },
-    { id: 'general', name: '일반', description: '일반 음악', color: '#3b82f6', createdAt: new Date().toISOString(), createdBy: 'System', songCount: 0 },
-    { id: 'favorites', name: '즐겨찾기', description: '좋아하는 음악', color: '#ef4444', createdAt: new Date().toISOString(), createdBy: 'System', songCount: 0 },
-    { id: 'kpop', name: 'K-POP', description: '한국 음악', color: '#8b5cf6', createdAt: new Date().toISOString(), createdBy: 'System', songCount: 0 }
+    { id: 'general', name: '일반', description: '일반 음악', color: '#3b82f6', createdAt: new Date().toISOString(), createdBy: 'System', songCount: 0 }
   ];
 
   const updateCurrentPlaylist = (songs, folderId, folders = folderList) => {
@@ -304,6 +324,72 @@ function App() {
     return (match && match[2].length === 11) ? match[2] : null;
   };
 
+  // YouTube 메타데이터 자동 추출 함수 (oEmbed API 사용 - API 키 불필요)
+  const fetchYouTubeMetadata = async () => {
+    const videoId = extractYouTubeId(youtubeUrl);
+    if (!videoId) {
+      alert('먼저 유효한 YouTube URL을 입력해주세요.');
+      return;
+    }
+
+    try {
+      setCustomTitle('로딩 중...');
+      setCustomArtist('로딩 중...');
+
+      // YouTube oEmbed API 사용 (API 키 불필요)
+      const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
+      
+      const response = await fetch(oembedUrl);
+
+      if (!response.ok) {
+        throw new Error(`oEmbed API 호출 실패: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      if (data.title && data.author_name) {
+        const title = data.title;
+        const channelName = data.author_name;
+        
+        // 제목에서 일반적인 패턴 파싱 시도
+        const titleParts = title.split(' - ');
+        if (titleParts.length >= 2) {
+          // "아티스트 - 곡제목" 형태인 경우
+          setCustomArtist(titleParts[0].trim());
+          setCustomTitle(titleParts.slice(1).join(' - ').trim());
+        } else {
+          // 그렇지 않으면 전체 제목과 채널명 사용
+          setCustomTitle(title.trim());
+          setCustomArtist(channelName.trim());
+        }
+        
+        // 성공시 조용히 완료 (알림창 없음)
+        console.log('✅ 메타데이터 자동 입력 완료:', { title, channelName });
+      } else {
+        throw new Error('비디오 정보를 찾을 수 없습니다.');
+      }
+    } catch (error) {
+      console.error('YouTube 메타데이터 가져오기 실패:', error);
+      
+      // oEmbed 실패시 수동 파싱 시도
+      try {
+        await fetchYouTubeMetadataFallback(videoId);
+      } catch (fallbackError) {
+        setCustomTitle('');
+        setCustomArtist('');
+        alert(`메타데이터 가져오기 실패: ${error.message}\n수동으로 입력해주세요.`);
+      }
+    }
+  };
+
+  // 대체 방법: 간단한 메타데이터 추출 (YouTube 페이지 제목 활용)
+  const fetchYouTubeMetadataFallback = async (videoId) => {
+    // 기본값 설정
+    setCustomTitle(`YouTube 비디오 (ID: ${videoId})`);
+    setCustomArtist('YouTube');
+    console.log('⚠️ 기본 정보로 설정되었습니다. 수동으로 수정해주세요.');
+  };
+
   const addYouTubeMusic = async () => {
     const videoId = extractYouTubeId(youtubeUrl);
     if (!videoId) {
@@ -330,15 +416,55 @@ function App() {
         artwork: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`
       };
       
+      // 먼저 로컬에 추가 (즉시 UI 업데이트)
       const updatedList = [...musicList, addedSong];
       setMusicList(updatedList);
       updateCurrentPlaylist(updatedList, selectedFolder);
+      
+      // 로컬 백업 저장
       await saveOfflineBackup();
+
+      // 🌐 구글시트에도 곡 추가 시도
+      try {
+        if (!GOOGLE_SCRIPT_URL.includes('YOUR_GOOGLE_APPS_SCRIPT_URL_HERE')) {
+          setCloudStatus('syncing');
+          
+          // 구글시트 전용 데이터 구조로 변환
+          const songForSheet = {
+            id: addedSong.id,
+            title: addedSong.title,
+            artist: addedSong.artist,
+            youtubeId: addedSong.youtubeId,
+            youtubeUrl: youtubeUrl.trim(), // YouTube URL 전체 추가
+            folder: addedSong.folder,
+            duration: addedSong.duration,
+            album: addedSong.album,
+            year: addedSong.year,
+            addedAt: addedSong.addedAt,
+            addedBy: addedSong.addedBy
+          };
+          
+          console.log('🔄 구글시트로 전송할 데이터:', songForSheet);
+          
+          await callGoogleAPI('addSong', songForSheet);
+          setCloudStatus('connected');
+          setLastSync(new Date());
+          console.log('✅ 구글시트에 곡 추가 완료:', addedSong.title);
+        } else {
+          console.log('⚠️ 구글시트 URL이 설정되지 않음. 로컬에만 저장됨.');
+        }
+      } catch (cloudError) {
+        console.error('🚨 구글시트 저장 실패 (로컬은 저장됨):', cloudError);
+        setCloudStatus('error');
+        // 구글시트 저장 실패해도 로컬은 이미 저장되었으므로 계속 진행
+      }
 
       setYoutubeUrl('');
       setCustomTitle('');
       setCustomArtist('');
-      alert(`"${customTitle.trim()}"이(가) 추가되었습니다!`);
+      
+      // 성공시 조용히 완료 (알림창 없음)
+      console.log('✅ 곡 추가 완료:', addedSong.title);
     } catch (error) {
       alert(`곡 추가 중 오류: ${error.message}`);
     }
@@ -349,18 +475,41 @@ function App() {
     if (!song || !confirm(`"${song.title}"을(를) 삭제하시겠습니까?`)) return;
 
     try {
+      // 먼저 로컬에서 삭제 (즉시 UI 업데이트)
       const updatedList = musicList.filter(s => s.id !== songId);
       setMusicList(updatedList);
       updateCurrentPlaylist(updatedList, selectedFolder);
       await saveOfflineBackup();
       
+      // 현재 재생 중인 곡이면 정지
       if (currentMusic?.id === songId) {
         setCurrentMusic(null);
         setIsPlaying(false);
         if (playerRef.current) playerRef.current.pauseVideo();
       }
       
-      alert('곡이 삭제되었습니다.');
+      // 🌐 구글시트에서도 곡 삭제 시도
+      try {
+        if (!GOOGLE_SCRIPT_URL.includes('YOUR_GOOGLE_APPS_SCRIPT_URL_HERE')) {
+          setCloudStatus('syncing');
+          
+          console.log('🗑️ 구글시트에서 곡 삭제 요청:', { songId: songId, songTitle: song.title });
+          
+          await callGoogleAPI('deleteSong', {
+            songId: songId,
+            songTitle: song.title // 디버깅용
+          });
+          setCloudStatus('connected');
+          setLastSync(new Date());
+          console.log('✅ 구글시트에서 곡 삭제 완료:', song.title);
+        }
+      } catch (cloudError) {
+        console.error('🚨 구글시트 삭제 실패 (로컬은 삭제됨):', cloudError);
+        setCloudStatus('error');
+      }
+      
+      // 성공시 조용히 완료 (알림창 없음)
+      console.log('✅ 곡 삭제 완료:', song.title);
     } catch (error) {
       alert(`삭제 중 오류: ${error.message}`);
     }
@@ -384,11 +533,16 @@ function App() {
   }
 
   try {
+    // 자동 색상 배정 (기존 폴더들이 사용하지 않는 색상 선택)
+    const usedColors = folderList.map(f => f.color);
+    const availableColors = FOLDER_COLORS.filter(color => !usedColors.includes(color));
+    const autoColor = availableColors.length > 0 ? availableColors[0] : FOLDER_COLORS[folderList.length % FOLDER_COLORS.length];
+    
     const newFolder = {
       id: `folder_${Date.now()}`,
       name: newFolderName.trim(),
       description: newFolderDescription.trim() || '사용자 생성 폴더',
-      color: newFolderColor,
+      color: newFolderColor || autoColor, // 사용자가 지정한 색상이 있으면 사용, 없으면 자동 배정
       createdAt: new Date().toISOString(),
       createdBy: 'Admin',
       songCount: 0
@@ -435,7 +589,11 @@ function App() {
 
     setNewFolderName('');
     setNewFolderDescription('');
-    setNewFolderColor('#3b82f6');
+    
+    // 다음 폴더를 위한 자동 색상 설정 (기존 usedColors 변수 재사용)
+    const nextAvailableColors = FOLDER_COLORS.filter(color => !usedColors.includes(color));
+    const nextAutoColor = nextAvailableColors.length > 1 ? nextAvailableColors[1] : FOLDER_COLORS[(folderList.length + 1) % FOLDER_COLORS.length];
+    setNewFolderColor(nextAutoColor);
     alert(`"${newFolder.name}" 폴더가 생성되었습니다!`);
   } catch (error) {
     console.error('폴더 생성 오류:', error);
@@ -447,7 +605,7 @@ function App() {
     const folder = folderList.find(f => f.id === folderId);
     if (!folder) return;
     
-    if (['all', 'general', 'favorites', 'kpop'].includes(folderId)) {
+    if (['all', 'general'].includes(folderId)) {
       alert('기본 폴더는 삭제할 수 없습니다.');
       return;
     }
@@ -489,7 +647,7 @@ function App() {
     const folder = folderList.find(f => f.id === folderId);
     if (!folder) return;
     
-    if (['all', 'general', 'favorites', 'kpop'].includes(folderId)) {
+    if (['all', 'general'].includes(folderId)) {
       alert('기본 폴더는 이름을 변경할 수 없습니다.');
       return;
     }
@@ -542,6 +700,63 @@ function App() {
 
   const clearSongSelection = () => {
     setSelectedSongs(new Set());
+  };
+
+  // 선택 재생 관련 함수들
+  const toggleSongForPlay = (songId) => {
+    const newSelected = new Set(selectedSongsForPlay);
+    if (newSelected.has(songId)) {
+      newSelected.delete(songId);
+    } else {
+      newSelected.add(songId);
+    }
+    setSelectedSongsForPlay(newSelected);
+  };
+
+  const selectAllSongsForPlay = () => {
+    const allSongIds = new Set(filteredMusic.map(song => song.id));
+    setSelectedSongsForPlay(allSongIds);
+  };
+
+  const clearSongSelectionForPlay = () => {
+    setSelectedSongsForPlay(new Set());
+  };
+
+  const playSelectedSongs = () => {
+    if (selectedSongsForPlay.size === 0) {
+      alert('재생할 곡을 선택해주세요.');
+      return;
+    }
+    
+    // 선택된 곡들로만 플레이리스트 구성
+    const selectedSongsList = filteredMusic.filter(song => selectedSongsForPlay.has(song.id));
+    setCurrentPlaylist(selectedSongsList);
+    setIsSelectivePlayMode(true);
+    
+    // 첫 번째 선택된 곡부터 재생
+    if (selectedSongsList.length > 0) {
+      loadSong(selectedSongsList[0], 0);
+      setIsPlaying(true);
+    }
+    
+    console.log('✅ 선택된 곡 재생 시작:', selectedSongsList.length, '곡');
+  };
+
+  const playAllSongs = () => {
+    // 전체 곡으로 플레이리스트 복원
+    setCurrentPlaylist(filteredMusic);
+    setIsSelectivePlayMode(false);
+    
+    // 현재 재생 중인 곡이 있으면 그대로 유지, 없으면 첫 번째 곡
+    if (currentMusic && filteredMusic.find(song => song.id === currentMusic.id)) {
+      const currentIndex = filteredMusic.findIndex(song => song.id === currentMusic.id);
+      setCurrentIndex(currentIndex);
+    } else if (filteredMusic.length > 0) {
+      loadSong(filteredMusic[0], 0);
+      setIsPlaying(true);
+    }
+    
+    console.log('✅ 전체 곡 재생 모드:', filteredMusic.length, '곡');
   };
 
   const moveSongsToFolder = async (songIds, folderId) => {
@@ -693,6 +908,7 @@ function App() {
 
   const updateSong = async (songId, updates) => {
     try {
+      // 먼저 로컬에서 수정 (즉시 UI 업데이트)
       const updatedSongs = musicList.map(song => 
         song.id === songId ? { ...song, ...updates } : song
       );
@@ -701,9 +917,36 @@ function App() {
       updateCurrentPlaylist(updatedSongs, selectedFolder);
       await saveOfflineBackup();
       
+      // 🌐 구글시트에서도 곡 정보 수정 시도
+      try {
+        if (!GOOGLE_SCRIPT_URL.includes('YOUR_GOOGLE_APPS_SCRIPT_URL_HERE')) {
+          setCloudStatus('syncing');
+          
+          console.log('✏️ 구글시트에서 곡 수정 요청:', { songId: songId, updates: updates });
+          
+          await callGoogleAPI('updateSong', {
+            songId: songId,
+            title: updates.title,
+            artist: updates.artist,
+            album: updates.album,
+            year: updates.year,
+            folder: updates.folder,
+            updatedAt: new Date().toISOString()
+          });
+          setCloudStatus('connected');
+          setLastSync(new Date());
+          console.log('✅ 구글시트에서 곡 수정 완료:', songId);
+        }
+      } catch (cloudError) {
+        console.error('🚨 구글시트 수정 실패 (로컬은 수정됨):', cloudError);
+        setCloudStatus('error');
+      }
+      
       setShowSongEditDialog(false);
       setEditingSong(null);
-      alert('곡 정보가 수정되었습니다.');
+      
+      // 성공시 조용히 완료 (알림창 없음)
+      console.log('✅ 곡 수정 완료:', songId);
     } catch (error) {
       alert(`곡 수정 중 오류: ${error.message}`);
     }
@@ -841,17 +1084,15 @@ function App() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
           <div style={{ flex: 1 }}></div>
           <div style={{ textAlign: 'center', flex: 1 }}>
-            <h1 className="app-title">🎵 가족 음악 앱</h1>
+            <h1 className="app-title">🎵 Music Hub</h1>
             <p className="welcome-message" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
-              <CloudStatusIcon />
-              {cloudStatus === 'connected' && '구글 시트 연결됨'}
-              {cloudStatus === 'syncing' && '동기화 중...'}
-              {cloudStatus === 'disconnected' && '오프라인 모드'}
-              {cloudStatus === 'error' && '연결 오류'}
-              {lastSync && cloudStatus === 'connected' && (
-                <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
-                  (마지막 동기화: {lastSync.toLocaleTimeString()})
-                </span>
+              {cloudStatus !== 'connected' && (
+                <>
+                  <CloudStatusIcon />
+                  {cloudStatus === 'syncing' && '동기화 중...'}
+                  {cloudStatus === 'disconnected' && '오프라인 모드'}
+                  {cloudStatus === 'error' && '연결 오류'}
+                </>
               )}
             </p>
           </div>
@@ -951,7 +1192,7 @@ function App() {
                       <p style={{ fontSize: '0.8rem', color: '#d1d5db', margin: 0 }}>{folder.description}</p>
                     </div>
                     <div style={{ display: 'flex', gap: '0.25rem' }}>
-                      {!['general', 'favorites', 'kpop'].includes(folder.id) && (
+                      {!['general'].includes(folder.id) && (
                         <>
                           <button 
                             onClick={() => {
@@ -976,7 +1217,7 @@ function App() {
                           </button>
                         </>
                       )}
-                      {['general', 'favorites', 'kpop'].includes(folder.id) && (
+                      {['general'].includes(folder.id) && (
                         <span style={{ fontSize: '0.75rem', color: '#6b7280', padding: '0.375rem' }}>기본 폴더</span>
                       )}
                     </div>
@@ -1098,22 +1339,58 @@ function App() {
       <main className="main-layout">
         <div className="playlist-section">
           <div style={{ marginBottom: '1rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-              <h3 style={{ color: '#f3f4f6', margin: 0 }}>📁 폴더별 보기</h3>
+            {/* 폴더와 검색창을 한 줄에 배치 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+              {/* 폴더 버튼들 */}
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {folderList.map(folder => (
+                  <button key={folder.id} onClick={() => filterByFolder(folder.id)}
+                    style={{ 
+                      padding: '0.5rem 0.75rem', 
+                      borderRadius: '0.5rem', 
+                      border: 'none', 
+                      background: selectedFolder === folder.id ? folder.color : '#4b5563', 
+                      color: 'white', 
+                      cursor: 'pointer',
+                      fontSize: '0.875rem',
+                      fontWeight: selectedFolder === folder.id ? '600' : '500',
+                      boxShadow: selectedFolder === folder.id ? `0 0 0 2px ${folder.color}40` : 'none'
+                    }}>
+                    {folder.name} ({folder.songCount || 0})
+                  </button>
+                ))}
+              </div>
+              
+              {/* 검색창 */}
+              <div style={{ flex: '1', minWidth: '200px', maxWidth: '300px' }}>
+                <input 
+                  type="text" 
+                  placeholder="곡 제목이나 아티스트 검색..." 
+                  value={searchTerm} 
+                  onChange={(e) => setSearchTerm(e.target.value)} 
+                  className="search-input" 
+                  style={{ width: '100%' }}
+                />
+              </div>
+              
+              {/* 관리자 모드 - 폴더 관리 버튼 */}
               {isAdminMode && (
                 <button onClick={() => setShowFolderManager(true)}
-                  style={{ padding: '0.5rem', borderRadius: '0.5rem', border: 'none', background: '#8b5cf6', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                  style={{ 
+                    padding: '0.5rem', 
+                    borderRadius: '0.5rem', 
+                    border: 'none', 
+                    background: '#8b5cf6', 
+                    color: 'white', 
+                    cursor: 'pointer', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '0.25rem',
+                    fontSize: '0.875rem'
+                  }}>
                   <Gear size={14} /> 폴더 관리
                 </button>
               )}
-            </div>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              {folderList.map(folder => (
-                <button key={folder.id} onClick={() => filterByFolder(folder.id)}
-                  style={{ padding: '0.5rem 0.75rem', borderRadius: '0.5rem', border: 'none', background: selectedFolder === folder.id ? folder.color : '#4b5563', color: 'white', cursor: 'pointer' }}>
-                  {folder.name} ({folder.songCount || 0})
-                </button>
-              ))}
             </div>
           </div>
 
@@ -1133,6 +1410,11 @@ function App() {
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <input type="text" placeholder="YouTube URL 입력" value={youtubeUrl} onChange={(e) => setYoutubeUrl(e.target.value)} 
                   style={{ flex: 1, padding: '0.5rem', borderRadius: '0.25rem', border: '1px solid #6b7280', background: '#1f2937', color: 'white' }} />
+                <button onClick={fetchYouTubeMetadata} 
+                  style={{ padding: '0.5rem 1rem', borderRadius: '0.25rem', border: 'none', background: '#3b82f6', color: 'white', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  title="YouTube에서 제목과 아티스트를 자동으로 가져옵니다">
+                  <Database size={16} /> 메타데이터
+                </button>
                 <button onClick={addYouTubeMusic} style={{ padding: '0.5rem 1rem', borderRadius: '0.25rem', border: 'none', background: '#10b981', color: 'white', cursor: 'pointer' }}>
                   <Plus size={16} /> 추가
                 </button>
@@ -1140,8 +1422,48 @@ function App() {
             </div>
           )}
 
-          <div style={{ marginBottom: '1rem' }}>
-            <input type="text" placeholder="곡 제목이나 아티스트 검색..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="search-input" />
+          {/* 선택 재생 컨트롤 */}
+          <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#374151', borderRadius: '0.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#d1d5db' }}>
+                <span>🎵 재생 모드:</span>
+                <span style={{ color: isSelectivePlayMode ? '#10b981' : '#3b82f6', fontWeight: '500' }}>
+                  {isSelectivePlayMode ? `선택 재생 (${currentPlaylist.length}곡)` : `전체 재생 (${filteredMusic.length}곡)`}
+                </span>
+                {selectedSongsForPlay.size > 0 && (
+                  <span style={{ color: '#f59e0b' }}>• {selectedSongsForPlay.size}곡 선택됨</span>
+                )}
+              </div>
+              
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button onClick={selectAllSongsForPlay}
+                  style={{ padding: '0.5rem 0.75rem', borderRadius: '0.25rem', border: 'none', background: '#6366f1', color: 'white', cursor: 'pointer', fontSize: '0.875rem' }}>
+                  전체 선택
+                </button>
+                <button onClick={clearSongSelectionForPlay}
+                  style={{ padding: '0.5rem 0.75rem', borderRadius: '0.25rem', border: 'none', background: '#6b7280', color: 'white', cursor: 'pointer', fontSize: '0.875rem' }}>
+                  선택 해제
+                </button>
+                <button onClick={playSelectedSongs}
+                  disabled={selectedSongsForPlay.size === 0}
+                  style={{ 
+                    padding: '0.5rem 0.75rem', 
+                    borderRadius: '0.25rem', 
+                    border: 'none', 
+                    background: selectedSongsForPlay.size > 0 ? '#10b981' : '#6b7280', 
+                    color: 'white', 
+                    cursor: selectedSongsForPlay.size > 0 ? 'pointer' : 'not-allowed', 
+                    fontSize: '0.875rem',
+                    fontWeight: '500'
+                  }}>
+                  ▶️ 선택한 곡 재생
+                </button>
+                <button onClick={playAllSongs}
+                  style={{ padding: '0.5rem 0.75rem', borderRadius: '0.25rem', border: 'none', background: '#3b82f6', color: 'white', cursor: 'pointer', fontSize: '0.875rem', fontWeight: '500' }}>
+                  🎵 전체 재생
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* 관리자 모드 - 곡 관리 툴바 */}
@@ -1182,15 +1504,26 @@ function App() {
             ) : (
               filteredMusic.map((song, index) => (
                 <div key={song.id} className={`song-item ${currentMusic?.id === song.id ? 'playing' : ''}`} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  {/* 관리자 모드 - 체크박스 */}
-                  {isAdminMode && (
+                  
+                  {/* 선택 재생용 체크박스 (모든 모드에서 표시) */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
                     <input
                       type="checkbox"
-                      checked={selectedSongs.has(song.id)}
-                      onChange={() => toggleSongSelection(song.id)}
+                      checked={selectedSongsForPlay.has(song.id)}
+                      onChange={() => toggleSongForPlay(song.id)}
                       style={{ cursor: 'pointer' }}
+                      title="재생 목록에 추가/제거"
                     />
-                  )}
+                    {isAdminMode && (
+                      <input
+                        type="checkbox"
+                        checked={selectedSongs.has(song.id)}
+                        onChange={() => toggleSongSelection(song.id)}
+                        style={{ cursor: 'pointer', transform: 'scale(0.8)' }}
+                        title="곡 이동용 선택"
+                      />
+                    )}
+                  </div>
                   
                   <img src={song.artwork} alt={song.title} className="song-artwork" />
                   
@@ -1248,13 +1581,6 @@ function App() {
                     </div>
                   )}
 
-                  {/* 일반 모드 - 삭제 버튼만 (사용자 추가 곡) */}
-                  {!isAdminMode && song.addedBy === 'User' && (
-                    <button onClick={(e) => { e.stopPropagation(); deleteSong(song.id); }} 
-                      style={{ padding: '0.375rem', borderRadius: '0.25rem', border: 'none', background: '#ef4444', color: 'white', cursor: 'pointer' }}>
-                      <Trash size={14} />
-                    </button>
-                  )}
                 </div>
               ))
             )}
