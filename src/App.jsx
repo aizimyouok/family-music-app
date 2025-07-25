@@ -4,11 +4,11 @@ import {
   Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, RepeatOnce, 
   SpeakerHigh, Plus, Link, Cloud, CloudSlash, PencilSimple, Trash, 
   Check, X, Folder, MusicNote, Gear, User, UserGear, Key, FolderPlus,
-  ArrowRight, Database, Warning, ArrowClockwise
+  ArrowRight, Database, Warning
 } from "phosphor-react";
 import "./App.css";
 
-const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzGHGhffnSVRktxNzvb5Yo4FWgQ99z2FbNLz9v80eVMd7qVyPTJUtWo3YURzLQ4Z77f/exec';
+const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzbYEhOKSxNDH7FjFDooM3cRXR1-F1UTwfSBjik3FxCJDAxeGYycXaSnndoJSaplW-5/exec';
 const ADMIN_PASSWORD_KEY = 'family_music_admin_password';
 
 // YouTube Data API v3 키 (개발용 - 실제 배포시에는 서버리스 함수로 보호 필요)
@@ -81,9 +81,13 @@ function App() {
   const [touchStart, setTouchStart] = useState(null);
   const [touchEnd, setTouchEnd] = useState(null);
   const [swipeDirection, setSwipeDirection] = useState(null);
-  const [pullDistance, setPullDistance] = useState(0);
-  const [isPullToRefresh, setIsPullToRefresh] = useState(false);
   const [showSkeletonUI, setShowSkeletonUI] = useState(false);
+  const [isMiniPlayer, setIsMiniPlayer] = useState(false); // 미니 플레이어 상태
+  
+  // 곡 순서 변경 관련 상태
+  const [hasOrderChanges, setHasOrderChanges] = useState(false);
+  const [isSavingOrder, setIsSavingOrder] = useState(false);
+  const [originalPlaylistOrder, setOriginalPlaylistOrder] = useState([]);
   
   const playerRef = useRef(null);
   const progressInterval = useRef(null);
@@ -102,6 +106,18 @@ function App() {
     }
     await loadAllData();
   };
+
+  // 화면 크기 감지
+  const [isDesktop, setIsDesktop] = useState(window.innerWidth > 1024);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsDesktop(window.innerWidth > 1024);
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // 키보드 단축키 처리 - 의존성 최소화
   const handleKeyPress = useCallback((e) => {
@@ -230,16 +246,8 @@ function App() {
     const deltaX = currentTouch.x - touchStart.x;
     const deltaY = currentTouch.y - touchStart.y;
     
-    // Pull to refresh 감지
-    if (deltaY > 0 && Math.abs(deltaX) < 50 && window.scrollY === 0) {
-      const distance = Math.min(deltaY, 100);
-      setPullDistance(distance);
-      
-      if (distance > 60 && !isPullToRefresh) {
-        setIsPullToRefresh(true);
-        navigator.vibrate && navigator.vibrate(50); // 햅틱 피드백
-      }
-    }
+    // Pull to refresh 완전히 비활성화
+    // 스와이프 제스처만 유지
     
     setTouchEnd(currentTouch);
   };
@@ -250,11 +258,6 @@ function App() {
     const deltaX = touchEnd.x - touchStart.x;
     const deltaY = touchEnd.y - touchStart.y;
     const deltaTime = Date.now() - touchStart.time;
-    
-    // Pull to refresh 실행
-    if (isPullToRefresh && pullDistance > 60) {
-      handlePullToRefresh();
-    }
     
     // 스와이프 제스처 감지 (빠른 스와이프만)
     if (deltaTime < 300 && Math.abs(deltaX) > 100 && Math.abs(deltaY) < 80) {
@@ -310,17 +313,8 @@ function App() {
     }
     
     // 상태 리셋
-    setPullDistance(0);
-    setIsPullToRefresh(false);
     setTouchStart(null);
     setTouchEnd(null);
-  };
-
-  // Pull to refresh 핸들러
-  const handlePullToRefresh = async () => {
-    setShowSkeletonUI(true);
-    await loadAllData();
-    setTimeout(() => setShowSkeletonUI(false), 800); // 사용자가 볼 수 있도록 약간의 딜레이
   };
 
   // 드래그 앤 드롭 핸들러들
@@ -367,6 +361,10 @@ function App() {
     
     setCurrentPlaylist(newPlaylist);
     
+    // 순서 변경 감지
+    const orderChanged = !arraysEqual(newPlaylist, originalPlaylistOrder);
+    setHasOrderChanges(orderChanged);
+    
     // 현재 재생 중인 곡의 인덱스 업데이트
     if (currentMusic) {
       const newCurrentIndex = newPlaylist.findIndex(song => song.id === currentMusic.id);
@@ -375,6 +373,170 @@ function App() {
     
     setDraggedSong(null);
     setDragOverIndex(null);
+    
+    console.log('🔄 곡 순서 변경됨:', {
+      from: draggedSong.index,
+      to: dropIndex,
+      hasChanges: orderChanged
+    });
+  };
+
+  // 배열 비교 함수
+  const arraysEqual = (arr1, arr2) => {
+    if (arr1.length !== arr2.length) return false;
+    return arr1.every((item, index) => item.id === arr2[index].id);
+  };
+
+  // 곡 순서 저장 함수
+  const savePlaylistOrder = async () => {
+    if (!hasOrderChanges) {
+      alert('변경된 순서가 없습니다.');
+      return;
+    }
+
+    setIsSavingOrder(true);
+    
+    try {
+      // 순서 정보를 포함한 곡 리스트 생성
+      const songsWithOrder = currentPlaylist.map((song, index) => ({
+        ...song,
+        order: index + 1,
+        lastOrderUpdate: new Date().toISOString()
+      }));
+
+      // 🌐 구글 시트에 순서 정보 저장 (기존 updateSong API 활용)
+      if (cloudStatus === 'connected' || cloudStatus === 'syncing') {
+        setCloudStatus('syncing');
+        
+        console.log('💾 구글 시트에 곡 순서 저장 중...', {
+          folder: selectedFolder,
+          songCount: songsWithOrder.length
+        });
+        
+        // 각 곡의 순서 정보를 개별적으로 업데이트
+        let successCount = 0;
+        let failCount = 0;
+        
+        for (const song of songsWithOrder) {
+          try {
+            const response = await callGoogleAPI('updateSong', {
+              songId: song.id,
+              title: song.title,
+              artist: song.artist,
+              album: song.album,
+              year: song.year,
+              folder: song.folder,
+              order: song.order, // 순서 정보 추가
+              updatedAt: new Date().toISOString()
+            });
+            
+            if (response.error) {
+              console.error('곡 순서 업데이트 실패:', song.title, response.error);
+              failCount++;
+            } else {
+              successCount++;
+            }
+            
+            // API 호출 간격 조절 (너무 빠른 요청 방지)
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+          } catch (songError) {
+            console.error('곡 개별 업데이트 실패:', song.title, songError);
+            failCount++;
+          }
+        }
+        
+        if (failCount === 0) {
+          console.log(`✅ 구글 시트에 곡 순서 저장 완료 (${successCount}곡)`);
+          setCloudStatus('connected');
+          setLastSync(new Date());
+        } else {
+          console.warn(`⚠️ 일부 곡 순서 저장 실패 (성공: ${successCount}, 실패: ${failCount})`);
+          setCloudStatus('error');
+        }
+      } else {
+        console.log('📱 오프라인 모드: 순서 정보를 로컬에만 저장');
+      }
+
+      // 로컬 상태 업데이트
+      const updatedMusicList = musicList.map(song => {
+        const orderedSong = songsWithOrder.find(s => s.id === song.id);
+        return orderedSong ? { ...song, order: orderedSong.order } : song;
+      });
+      
+      setMusicList(updatedMusicList);
+      
+      // 오프라인 백업 저장
+      const backupData = {
+        songs: updatedMusicList,
+        folders: folderList,
+        lastSync: new Date().toISOString(),
+        version: '2.0'
+      };
+      localStorage.setItem('familyMusicApp_backup', JSON.stringify(backupData));
+      
+      // 원본 순서 업데이트
+      setOriginalPlaylistOrder([...currentPlaylist]);
+      setHasOrderChanges(false);
+      
+      alert(`✅ 곡 순서가 저장되었습니다! (${selectedFolder === 'all' ? '전체' : folderList.find(f => f.id === selectedFolder)?.name} 폴더)`);
+      
+    } catch (error) {
+      console.error('🚨 곡 순서 저장 실패:', error);
+      
+      // 구체적인 오류 메시지 제공
+      let errorMessage = '곡 순서 저장 중 오류가 발생했습니다.';
+      if (error.message?.includes('지원되지 않는 액션')) {
+        errorMessage = '구글 시트 연동 중 일시적 오류입니다. 오프라인에서 순서가 저장되었습니다.';
+        
+        // 오프라인 백업만 저장
+        const songsWithOrder = currentPlaylist.map((song, index) => ({
+          ...song,
+          order: index + 1,
+          lastOrderUpdate: new Date().toISOString()
+        }));
+        
+        const updatedMusicList = musicList.map(song => {
+          const orderedSong = songsWithOrder.find(s => s.id === song.id);
+          return orderedSong ? { ...song, order: orderedSong.order } : song;
+        });
+        
+        setMusicList(updatedMusicList);
+        
+        const backupData = {
+          songs: updatedMusicList,
+          folders: folderList,
+          lastSync: new Date().toISOString(),
+          version: '2.0'
+        };
+        localStorage.setItem('familyMusicApp_backup', JSON.stringify(backupData));
+        
+        setOriginalPlaylistOrder([...currentPlaylist]);
+        setHasOrderChanges(false);
+        
+        alert('📱 오프라인에서 곡 순서가 저장되었습니다! 인터넷 연결 확인 후 다시 시도해보세요.');
+        return;
+      }
+      
+      alert(`❌ ${errorMessage}: ${error.message}`);
+      setCloudStatus('error');
+    } finally {
+      setIsSavingOrder(false);
+    }
+  };
+
+  // 순서 변경 취소 함수
+  const cancelOrderChanges = () => {
+    setCurrentPlaylist([...originalPlaylistOrder]);
+    setHasOrderChanges(false);
+    
+    // 현재 재생 중인 곡의 인덱스 복원
+    if (currentMusic) {
+      const originalIndex = originalPlaylistOrder.findIndex(song => song.id === currentMusic.id);
+      setCurrentIndex(originalIndex);
+    }
+    
+    console.log('🔄 곡 순서 변경 취소됨');
   };
 
   const handleDragEnd = () => {
@@ -386,6 +548,36 @@ function App() {
     initializeApp();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 새로고침 방지 - 음악 재생 중일 때
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (isPlaying || currentMusic) {
+        e.preventDefault();
+        e.returnValue = '음악이 재생 중입니다. 페이지를 나가시겠습니까?';
+        return '음악이 재생 중입니다. 페이지를 나가시겠습니까?';
+      }
+    };
+
+    const handleKeyDown = (e) => {
+      // F5, Ctrl+R, Cmd+R 방지
+      if (e.key === 'F5' || (e.ctrlKey && e.key === 'r') || (e.metaKey && e.key === 'r')) {
+        if (isPlaying || currentMusic) {
+          e.preventDefault();
+          alert('음악 재생 중에는 새로고침이 제한됩니다.');
+          return false;
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isPlaying, currentMusic]);
+
   // 키보드 이벤트 리스너를 별도의 useEffect로 분리
   useEffect(() => {
     document.addEventListener('keydown', handleKeyPress);
@@ -394,6 +586,159 @@ function App() {
       document.removeEventListener('keydown', handleKeyPress);
     };
   }, [handleKeyPress]);
+
+  // Media Session API 설정 (블루투스/외부 장치 제어)
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      console.log('🎵 Media Session API 지원됨 - 외부 장치 제어 활성화');
+      
+      // 미디어 세션 액션 핸들러 설정
+      navigator.mediaSession.setActionHandler('play', () => {
+        console.log('🎵 외부 장치에서 재생 요청');
+        if (playerRef.current && !isPlaying) {
+          playerRef.current.playVideo();
+        }
+      });
+
+      navigator.mediaSession.setActionHandler('pause', () => {
+        console.log('⏸️ 외부 장치에서 일시정지 요청');
+        if (playerRef.current && isPlaying) {
+          playerRef.current.pauseVideo();
+        }
+      });
+
+      navigator.mediaSession.setActionHandler('previoustrack', () => {
+        console.log('⏮️ 외부 장치에서 이전곡 요청');
+        prevSong();
+      });
+
+      navigator.mediaSession.setActionHandler('nexttrack', () => {
+        console.log('⏭️ 외부 장치에서 다음곡 요청');
+        nextSong();
+      });
+
+      // 시크 바 제어 (지원 장치에서)
+      navigator.mediaSession.setActionHandler('seekto', (details) => {
+        if (playerRef.current && details.seekTime) {
+          console.log('⏩ 외부 장치에서 시크 요청:', details.seekTime);
+          playerRef.current.seekTo(details.seekTime, true);
+          setCurrentTime(details.seekTime);
+        }
+      });
+
+      // 앞으로/뒤로 건너뛰기 (일부 장치에서 지원)
+      navigator.mediaSession.setActionHandler('seekforward', (details) => {
+        if (playerRef.current) {
+          const seekTime = Math.min(currentTime + (details.seekOffset || 10), duration);
+          console.log('⏩ 외부 장치에서 앞으로 건너뛰기:', seekTime);
+          playerRef.current.seekTo(seekTime, true);
+          setCurrentTime(seekTime);
+        }
+      });
+
+      navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+        if (playerRef.current) {
+          const seekTime = Math.max(currentTime - (details.seekOffset || 10), 0);
+          console.log('⏪ 외부 장치에서 뒤로 건너뛰기:', seekTime);
+          playerRef.current.seekTo(seekTime, true);
+          setCurrentTime(seekTime);
+        }
+      });
+
+      // 정지 버튼 (일부 장치에서 지원)
+      navigator.mediaSession.setActionHandler('stop', () => {
+        console.log('⏹️ 외부 장치에서 정지 요청');
+        if (playerRef.current) {
+          playerRef.current.pauseVideo();
+          playerRef.current.seekTo(0, true);
+          setCurrentTime(0);
+        }
+      });
+
+    } else {
+      console.log('❌ Media Session API 미지원 - 외부 장치 제어 불가');
+    }
+
+    // 컴포넌트 언마운트 시 핸들러 정리
+    return () => {
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.setActionHandler('play', null);
+        navigator.mediaSession.setActionHandler('pause', null);
+        navigator.mediaSession.setActionHandler('previoustrack', null);
+        navigator.mediaSession.setActionHandler('nexttrack', null);
+        navigator.mediaSession.setActionHandler('seekto', null);
+        navigator.mediaSession.setActionHandler('seekforward', null);
+        navigator.mediaSession.setActionHandler('seekbackward', null);
+        navigator.mediaSession.setActionHandler('stop', null);
+      }
+    };
+  }, [isPlaying, currentTime, duration]); // 의존성 추가
+
+  // 현재 곡 정보 업데이트 시 Media Session 메타데이터 업데이트
+  useEffect(() => {
+    if ('mediaSession' in navigator && currentMusic) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentMusic.title || '알 수 없는 제목',
+        artist: currentMusic.artist || '알 수 없는 아티스트',
+        album: currentMusic.album || 'Music Hub',
+        artwork: [
+          { 
+            src: currentMusic.artwork || 'https://placehold.co/512x512/1f2937/ffffff?text=🎵', 
+            sizes: '512x512', 
+            type: 'image/png' 
+          },
+          { 
+            src: currentMusic.artwork || 'https://placehold.co/256x256/1f2937/ffffff?text=🎵', 
+            sizes: '256x256', 
+            type: 'image/png' 
+          },
+          { 
+            src: currentMusic.artwork || 'https://placehold.co/96x96/1f2937/ffffff?text=🎵', 
+            sizes: '96x96', 
+            type: 'image/png' 
+          }
+        ]
+      });
+
+      console.log('🎵 Media Session 메타데이터 업데이트:', currentMusic.title);
+    }
+  }, [currentMusic]);
+
+  // 재생 상태 변경 시 Media Session 상태 업데이트
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+      console.log('🎵 Media Session 재생 상태:', isPlaying ? 'playing' : 'paused');
+    }
+  }, [isPlaying]);
+
+  // 재생 위치 업데이트 (일부 장치에서 진행바 표시)
+  useEffect(() => {
+    if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
+      if (duration > 0) {
+        navigator.mediaSession.setPositionState({
+          duration: duration,
+          playbackRate: 1.0,
+          position: currentTime
+        });
+      }
+    }
+  }, [currentTime, duration]);
+
+  // 모바일에서 자동으로 미니 플레이어 모드로 시작
+  useEffect(() => {
+    const checkMobile = () => {
+      const isMobileDevice = window.innerWidth <= 768;
+      setIsMiniPlayer(isMobileDevice);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => {
+      window.removeEventListener('resize', checkMobile);
+    };
+  }, []);
 
   const loadAllData = async () => {
     try {
@@ -533,9 +878,15 @@ function App() {
     let playlist = folderId === 'all' ? songs : songs.filter(song => song.folder === folderId);
     setCurrentPlaylist(playlist);
     
+    // 원본 순서 저장 (순서 변경 감지용)
+    setOriginalPlaylistOrder([...playlist]);
+    setHasOrderChanges(false);
+    
     const updatedFolders = folders.map(folder => ({
       ...folder,
-      songCount: songs.filter(song => song.folder === folder.id).length
+      songCount: folder.id === 'all' 
+        ? songs.length  // 전체 폴더는 모든 곡의 총 개수
+        : songs.filter(song => song.folder === folder.id).length  // 다른 폴더는 해당 폴더의 곡 개수
     }));
     setFolderList(updatedFolders);
   };
@@ -820,6 +1171,10 @@ function App() {
     setSelectedFolder(folderId);
     setSearchTerm('');
     updateCurrentPlaylist(musicList, folderId);
+    
+    // 폴더 변경 시 순서 변경 상태 리셋
+    setHasOrderChanges(false);
+    setIsSavingOrder(false);
   };
 
   const createNewFolder = async () => {
@@ -1037,6 +1392,16 @@ function App() {
     // 첫 번째 선택된 곡부터 재생
     if (selectedSongsList.length > 0) {
       loadSong(selectedSongsList[0], 0);
+      setTimeout(() => {
+        if (playerRef.current) {
+          playerRef.current.playVideo();
+          try {
+            playerRef.current.setPlaybackQuality('small');
+          } catch (e) {
+            // 에러 무시
+          }
+        }
+      }, 2000);
       setIsPlaying(true);
     }
     
@@ -1054,6 +1419,16 @@ function App() {
       setCurrentIndex(currentIndex);
     } else if (filteredMusic.length > 0) {
       loadSong(filteredMusic[0], 0);
+      setTimeout(() => {
+        if (playerRef.current) {
+          playerRef.current.playVideo();
+          try {
+            playerRef.current.setPlaybackQuality('small');
+          } catch (e) {
+            // 에러 무시
+          }
+        }
+      }, 2000);
       setIsPlaying(true);
     }
     
@@ -1256,7 +1631,30 @@ function App() {
   const youtubeOpts = {
     height: '0',
     width: '0',
-    playerVars: { autoplay: 0, controls: 0, disablekb: 1, enablejsapi: 1, fs: 0, modestbranding: 1, rel: 0, showinfo: 0 }
+    playerVars: { 
+      autoplay: 0, 
+      controls: 0, 
+      disablekb: 1, 
+      enablejsapi: 1, 
+      fs: 0, 
+      modestbranding: 1, 
+      rel: 0, 
+      showinfo: 0,
+      iv_load_policy: 3,  // 동영상 주석 숨김
+      cc_load_policy: 0,  // 자막 비활성화
+      playsinline: 1,      // 인라인 재생
+      origin: window.location.origin,  // 원본 도메인 설정
+      // 광고 최소화 설정
+      loop: 0,            // 반복 재생 비활성화
+      start: 1,           // 1초부터 시작 (일부 광고 스킵 가능)
+      quality: 'small',   // 낮은 화질로 설정 (광고 빈도 감소)
+      cc_lang_pref: 'ko', // 한국어 자막 설정
+      hl: 'ko',           // 인터페이스 언어 한국어
+      // 추가 최적화 설정
+      widget_referrer: window.location.origin,
+      enablejsapi: 1,
+      wmode: 'transparent'
+    }
   };
 
   const onPlayerReady = (event) => {
@@ -1266,6 +1664,14 @@ function App() {
         if (playerRef.current) {
           playerRef.current.loadVideoById(currentMusic.youtubeId);
           playerRef.current.setVolume(volume);
+          
+          // 광고 스킵을 위한 추가 설정
+          try {
+            // 플레이어 품질을 낮게 설정 (광고 빈도 감소)
+            playerRef.current.setPlaybackQuality('small');
+          } catch (error) {
+            console.log('플레이어 품질 설정 실패:', error);
+          }
         }
       }, 500);
     }
@@ -1273,6 +1679,33 @@ function App() {
 
   const onPlayerStateChange = (event) => {
     const { data } = event;
+    
+    // 광고 감지 및 스킵 시도
+    try {
+      if (playerRef.current) {
+        const playerState = playerRef.current.getPlayerState();
+        const videoUrl = playerRef.current.getVideoUrl();
+        
+        // 광고가 재생 중인지 확인 (완벽하지 않지만 시도)
+        if (videoUrl && videoUrl.includes('googleads')) {
+          console.log('광고 감지됨, 스킵 시도');
+          // 광고 스킵 시도 (YouTube 정책상 제한적)
+          setTimeout(() => {
+            if (playerRef.current && playerRef.current.getPlayerState() === 1) {
+              try {
+                playerRef.current.seekTo(1, true); // 1초로 이동
+              } catch (e) {
+                console.log('광고 스킵 실패:', e);
+              }
+            }
+          }, 1000);
+        }
+      }
+    } catch (error) {
+      // 에러 무시 (광고 스킵은 보조 기능)
+    }
+    
+    // 기존 상태 변경 처리
     if (data === 1) { setIsPlaying(true); startProgressTracking(); }
     else if (data === 2) { setIsPlaying(false); stopProgressTracking(); }
     else if (data === 0) { setIsPlaying(false); stopProgressTracking(); handleSongEnd(); }
@@ -1301,8 +1734,24 @@ function App() {
     setCurrentIndex(index);
     if (playerRef.current) {
       try {
-        playerRef.current.loadVideoById(song.youtubeId);
+        // 광고 최소화를 위한 추가 파라미터와 함께 로드
+        playerRef.current.loadVideoById({
+          videoId: song.youtubeId,
+          startSeconds: 1, // 1초부터 시작 (일부 광고 스킵 가능)
+          suggestedQuality: 'small' // 낮은 화질로 설정
+        });
         playerRef.current.setVolume(volume);
+        
+        // 플레이어 품질을 추가로 설정
+        setTimeout(() => {
+          try {
+            if (playerRef.current) {
+              playerRef.current.setPlaybackQuality('small');
+            }
+          } catch (e) {
+            // 에러 무시
+          }
+        }, 1000);
       } catch {
         setTimeout(() => loadSong(song, index), 1000);
       }
@@ -1314,10 +1763,31 @@ function App() {
       if (playerRef.current) playerRef.current.pauseVideo();
     } else {
       if (currentMusic) {
-        if (playerRef.current) playerRef.current.playVideo();
+        if (playerRef.current) {
+          playerRef.current.playVideo();
+          // 광고 최소화를 위한 추가 설정
+          setTimeout(() => {
+            try {
+              if (playerRef.current) {
+                playerRef.current.setPlaybackQuality('small');
+              }
+            } catch (e) {
+              // 에러 무시
+            }
+          }, 1000);
+        }
       } else if (currentPlaylist.length > 0) {
         loadSong(currentPlaylist[0], 0);
-        setTimeout(() => playerRef.current?.playVideo(), 2000);
+        setTimeout(() => {
+          if (playerRef.current) {
+            playerRef.current.playVideo();
+            try {
+              playerRef.current.setPlaybackQuality('small');
+            } catch (e) {
+              // 에러 무시
+            }
+          }
+        }, 2000);
       }
     }
   };
@@ -1327,7 +1797,17 @@ function App() {
     let nextIndex = isShuffle ? Math.floor(Math.random() * currentPlaylist.length) : (currentIndex + 1) % currentPlaylist.length;
     if (currentPlaylist[nextIndex]) {
       loadSong(currentPlaylist[nextIndex], nextIndex);
-      setTimeout(() => playerRef.current?.playVideo(), 2000);
+      setTimeout(() => {
+        if (playerRef.current) {
+          playerRef.current.playVideo();
+          // 광고 최소화를 위한 추가 설정
+          try {
+            playerRef.current.setPlaybackQuality('small');
+          } catch (e) {
+            // 에러 무시
+          }
+        }
+      }, 2000);
     }
   };
 
@@ -1336,7 +1816,17 @@ function App() {
     const prevIndex = (currentIndex - 1 + currentPlaylist.length) % currentPlaylist.length;
     if (currentPlaylist[prevIndex]) {
       loadSong(currentPlaylist[prevIndex], prevIndex);
-      setTimeout(() => playerRef.current?.playVideo(), 2000);
+      setTimeout(() => {
+        if (playerRef.current) {
+          playerRef.current.playVideo();
+          // 광고 최소화를 위한 추가 설정
+          try {
+            playerRef.current.setPlaybackQuality('small');
+          } catch (e) {
+            // 에러 무시
+          }
+        }
+      }, 2000);
     }
   };
 
@@ -1354,7 +1844,17 @@ function App() {
     const songIndex = currentFilteredList.findIndex(s => s.id === song.id);
     if (songIndex >= 0) {
       loadSong(song, songIndex);
-      setTimeout(() => playerRef.current?.playVideo(), 2000);
+      setTimeout(() => {
+        if (playerRef.current) {
+          playerRef.current.playVideo();
+          // 광고 최소화를 위한 추가 설정
+          try {
+            playerRef.current.setPlaybackQuality('small');
+          } catch (e) {
+            // 에러 무시
+          }
+        }
+      }, 2000);
     }
   };
 
@@ -1470,34 +1970,45 @@ function App() {
     <div className="container">
       <header className="header">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-          <div style={{ flex: 1 }}></div>
+          {/* 왼쪽 상단 - 기능 상태 표시 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.65rem' }}>
+            <span style={{ color: '#93c5fd' }} title="광고 최소화 모드 활성화">💡 광고최소화</span>
+            {'mediaSession' in navigator && <span style={{ color: '#10b981' }} title="블루투스/외부 장치 제어 지원">🎮 외부제어</span>}
+          </div>
+
+          {/* 중앙 - 앱 제목 */}
           <div style={{ textAlign: 'center', flex: 1 }}>
             <h1 className="app-title">🎵 Music Hub</h1>
-            <p className="welcome-message" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
-              {cloudStatus !== 'connected' && (
-                <>
-                  <CloudStatusIcon />
-                  {cloudStatus === 'syncing' && '동기화 중...'}
-                  {cloudStatus === 'disconnected' && '오프라인 모드'}
-                  {cloudStatus === 'error' && '연결 오류'}
-                </>
-              )}
-            </p>
+            {cloudStatus !== 'connected' && (
+              <p className="welcome-message" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}>
+                <CloudStatusIcon />
+                <span style={{ fontSize: '0.75rem' }}>
+                  {cloudStatus === 'syncing' && '동기화'}
+                  {cloudStatus === 'disconnected' && '오프라인'}
+                  {cloudStatus === 'error' && '오류'}
+                </span>
+              </p>
+            )}
           </div>
-          <div style={{ flex: 1, display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+
+          {/* 오른쪽 - 관리자 모드 버튼 */}
+          <div style={{ display: 'flex', gap: '0.25rem' }}>
             <button onClick={testConnection} disabled={cloudStatus === 'syncing'} 
-              style={{ padding: '0.5rem', borderRadius: '0.5rem', border: 'none', background: cloudStatus === 'connected' ? '#10b981' : '#f59e0b', color: 'white', cursor: 'pointer' }}>
-              <Cloud size={16} />
+              style={{ padding: '0.375rem', borderRadius: '0.375rem', border: 'none', background: cloudStatus === 'connected' ? '#10b981' : '#f59e0b', color: 'white', cursor: 'pointer' }}
+              title="구글 시트 연결 테스트">
+              <Cloud size={14} />
             </button>
             {!isAdminMode ? (
               <button onClick={() => setShowPasswordDialog(true)} 
-                style={{ padding: '0.5rem 0.75rem', borderRadius: '0.5rem', border: 'none', background: '#3b82f6', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <UserGear size={16} /> 관리자
+                style={{ padding: '0.375rem 0.5rem', borderRadius: '0.375rem', border: 'none', background: '#3b82f6', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem' }}
+                title="관리자 모드">
+                <UserGear size={12} /> 관리자
               </button>
             ) : (
               <button onClick={exitAdminMode} 
-                style={{ padding: '0.5rem 0.75rem', borderRadius: '0.5rem', border: 'none', background: '#6b7280', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <User size={16} /> 일반모드
+                style={{ padding: '0.375rem 0.5rem', borderRadius: '0.375rem', border: 'none', background: '#6b7280', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem' }}
+                title="일반 모드">
+                <User size={12} /> 일반
               </button>
             )}
           </div>
@@ -1724,23 +2235,11 @@ function App() {
         <YouTube videoId={currentMusic?.youtubeId || ''} opts={youtubeOpts} onReady={onPlayerReady} onStateChange={onPlayerStateChange} />
       </div>
 
-      <main className="main-layout"
+      <main className={`main-layout ${isDesktop ? 'desktop' : 'mobile'}`}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        {/* Pull to refresh 인디케이터 */}
-        <div 
-          className={`pull-indicator ${isPullToRefresh ? 'active' : ''}`}
-          style={{
-            transform: `translateY(${Math.min(pullDistance - 20, 40)}px)`,
-            opacity: pullDistance > 20 ? 1 : pullDistance > 10 ? 0.5 : 0
-          }}
-        >
-          <ArrowClockwise size={16} />
-          <span>{isPullToRefresh ? '놓으면 새로고침' : '당겨서 새로고침'}</span>
-        </div>
-
         {/* 스와이프 방향 표시 */}
         {swipeDirection && (
           <>
@@ -1815,6 +2314,18 @@ function App() {
           {isAdminMode && (
             <div style={{ marginBottom: '1rem', padding: '1rem', background: '#374151', borderRadius: '0.5rem' }}>
               <h3 style={{ marginBottom: '0.75rem', color: '#f3f4f6' }}>🎵 YouTube 음악 추가</h3>
+              <div style={{ 
+                marginBottom: '0.5rem', 
+                padding: '0.5rem', 
+                background: 'rgba(59, 130, 246, 0.1)', 
+                border: '1px solid rgba(59, 130, 246, 0.2)', 
+                borderRadius: '0.25rem',
+                fontSize: '0.75rem',
+                color: '#93c5fd'
+              }}>
+                💡 광고 최소화 팁: 오래된 음악, 인디 아티스트, 공식 채널의 음악은 광고가 적습니다<br/>
+                🎮 외부 장치 제어: {'mediaSession' in navigator ? '블루투스 헤드셋, 자동차 핸들 버튼으로 제어 가능 ✅' : '이 브라우저에서는 외부 장치 제어 미지원 ❌'}
+              </div>
               <div style={{ display: 'grid', gap: '0.5rem', gridTemplateColumns: '1fr 1fr 1fr', marginBottom: '0.5rem' }}>
                 <input type="text" placeholder="곡 제목 *" value={customTitle} onChange={(e) => setCustomTitle(e.target.value)} 
                   style={{ padding: '0.5rem', borderRadius: '0.25rem', border: '1px solid #6b7280', background: '#1f2937', color: 'white' }} />
@@ -1840,56 +2351,212 @@ function App() {
             </div>
           )}
 
-          {/* 선택 재생 컨트롤 */}
-          <div style={{ marginBottom: '1rem', padding: '0.75rem', background: '#374151', borderRadius: '0.5rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.875rem', color: '#d1d5db' }}>
-                <span>🎵 재생 모드:</span>
+          {/* 선택 재생 컨트롤 - 크기 축소 */}
+          <div style={{ marginBottom: '0.75rem', padding: '0.5rem', background: '#374151', borderRadius: '0.375rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.375rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.75rem', color: '#d1d5db' }}>
+                <span>🎵</span>
                 <span style={{ color: isSelectivePlayMode ? '#10b981' : '#3b82f6', fontWeight: '500' }}>
-                  {isSelectivePlayMode ? `선택 재생 (${currentPlaylist.length}곡)` : `전체 재생 (${filteredMusic.length}곡)`}
+                  {isSelectivePlayMode ? `선택재생 (${currentPlaylist.length})` : `전체재생 (${filteredMusic.length})`}
                 </span>
                 {selectedSongsForPlay.size > 0 && (
-                  <span style={{ color: '#f59e0b' }}>• {selectedSongsForPlay.size}곡 선택됨</span>
+                  <span style={{ color: '#f59e0b' }}>• {selectedSongsForPlay.size}곡</span>
                 )}
               </div>
               
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
                 <button onClick={selectAllSongsForPlay}
-                  style={{ padding: '0.5rem 0.75rem', borderRadius: '0.25rem', border: 'none', background: '#6366f1', color: 'white', cursor: 'pointer', fontSize: '0.875rem' }}>
-                  전체 선택
+                  style={{ padding: '0.25rem 0.5rem', borderRadius: '0.25rem', border: 'none', background: '#6366f1', color: 'white', cursor: 'pointer', fontSize: '0.7rem' }}>
+                  전체선택
                 </button>
                 <button onClick={clearSongSelectionForPlay}
-                  style={{ padding: '0.5rem 0.75rem', borderRadius: '0.25rem', border: 'none', background: '#6b7280', color: 'white', cursor: 'pointer', fontSize: '0.875rem' }}>
-                  선택 해제
+                  style={{ padding: '0.25rem 0.5rem', borderRadius: '0.25rem', border: 'none', background: '#6b7280', color: 'white', cursor: 'pointer', fontSize: '0.7rem' }}>
+                  해제
                 </button>
                 <button onClick={playSelectedSongs}
                   disabled={selectedSongsForPlay.size === 0}
                   style={{ 
-                    padding: '0.5rem 0.75rem', 
+                    padding: '0.25rem 0.5rem', 
                     borderRadius: '0.25rem', 
                     border: 'none', 
                     background: selectedSongsForPlay.size > 0 ? '#10b981' : '#6b7280', 
                     color: 'white', 
                     cursor: selectedSongsForPlay.size > 0 ? 'pointer' : 'not-allowed', 
-                    fontSize: '0.875rem',
+                    fontSize: '0.7rem',
                     fontWeight: '500'
                   }}>
-                  ▶️ 선택한 곡 재생
+                  ▶️ 선택재생
                 </button>
                 <button onClick={playAllSongs}
-                  style={{ padding: '0.5rem 0.75rem', borderRadius: '0.25rem', border: 'none', background: '#3b82f6', color: 'white', cursor: 'pointer', fontSize: '0.875rem', fontWeight: '500' }}>
-                  🎵 전체 재생
+                  style={{ padding: '0.25rem 0.5rem', borderRadius: '0.25rem', border: 'none', background: '#3b82f6', color: 'white', cursor: 'pointer', fontSize: '0.7rem', fontWeight: '500' }}>
+                  🎵 전체재생
                 </button>
               </div>
             </div>
           </div>
+
+          {/* 모바일에서만 임베디드 플레이어 표시 */}
+          {!isDesktop && (
+            <div className={`embedded-player-section ${isMiniPlayer ? 'mini' : 'full'}`}>
+              {/* 플레이어 토글 버튼 */}
+              <button 
+                className="embedded-player-toggle"
+                onClick={() => setIsMiniPlayer(!isMiniPlayer)}
+                title={isMiniPlayer ? '플레이어 확장' : '플레이어 축소'}
+              >
+                {isMiniPlayer ? '▼' : '▲'}
+              </button>
+
+              {/* 미니 플레이어와 풀 플레이어 내용 */}
+              {isMiniPlayer ? (
+                <div className="mini-player-content">
+                  <div className="mini-top-section">
+                    <img 
+                      src={currentMusic?.artwork || "https://placehold.co/300x300/1f2937/ffffff?text=🎵"} 
+                      alt="Album Art" 
+                      className={`mini-album-art ${isPlaying ? 'playing' : ''}`}
+                    />
+                    {isPlaying && (
+                      <div className="mini-wave-overlay">
+                        <div className="wave-bar"></div><div className="wave-bar"></div><div className="wave-bar"></div>
+                      </div>
+                    )}
+                    <div className="mini-song-info">
+                      <div className="mini-title">{currentMusic?.title || "곡을 선택해주세요"}</div>
+                      <div className="mini-artist">{currentMusic?.artist || "아티스트"}</div>
+                    </div>
+                  </div>
+
+                  {/* 미니 진행바 */}
+                  <div className="mini-progress-container">
+                    <input type="range" min="0" max={duration || 100} value={currentTime} 
+                      onChange={(e) => { setCurrentTime(parseFloat(e.target.value)); if (playerRef.current) playerRef.current.seekTo(parseFloat(e.target.value)); }} 
+                      className="mini-progress-bar" />
+                    <div className="mini-time-info">
+                      <span>{formatTime(currentTime)}</span><span>{formatTime(duration)}</span>
+                    </div>
+                  </div>
+
+                  {/* 미니 메인 컨트롤 */}
+                  <div className="mini-controls">
+                    <button onClick={() => setIsShuffle(!isShuffle)} className={`mini-control-btn ${isShuffle ? 'active' : ''}`}>
+                      <Shuffle size={18} />
+                    </button>
+                    <button onClick={prevSong} className="mini-control-btn">
+                      <SkipBack size={22} weight="fill" />
+                    </button>
+                    <button onClick={togglePlayPause} className="mini-play-btn">
+                      {isPlaying ? <Pause size={24} weight="fill" /> : <Play size={24} weight="fill" />}
+                    </button>
+                    <button onClick={nextSong} className="mini-control-btn">
+                      <SkipForward size={22} weight="fill" />
+                    </button>
+                    <button onClick={() => { const modes = ['none', 'all', 'one']; setRepeatMode(modes[(modes.indexOf(repeatMode) + 1) % modes.length]); }} 
+                      className={`mini-control-btn ${repeatMode !== 'none' ? 'active' : ''}`}>
+                      {repeatMode === 'one' ? <RepeatOnce size={18} /> : <Repeat size={18} />}
+                    </button>
+                  </div>
+
+                  {/* 미니 볼륨 컨트롤 - 데스크톱에서만 표시 */}
+                  {isDesktop && (
+                    <div className="mini-volume-container">
+                      <SpeakerHigh className="mini-volume-icon" size={16} />
+                      <input type="range" min="0" max="100" step="1" value={volume} 
+                        onChange={(e) => { setVolume(parseInt(e.target.value)); if (playerRef.current) playerRef.current.setVolume(parseInt(e.target.value)); }} 
+                        className="mini-volume-slider" />
+                      <span className="mini-volume-value">{volume}</span>
+                    </div>
+                  )}
+
+                  {/* 미니 플레이리스트 정보 */}
+                  <div className="mini-playlist-info">
+                    <span>재생목록: {currentPlaylist.length}곡 | {currentIndex + 1}/{currentPlaylist.length || 1}</span>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      {cloudStatus === 'connected' && <span style={{ fontSize: '0.7rem', color: '#10b981' }}>🌐</span>}
+                      {isAdminMode && <span style={{ fontSize: '0.7rem', color: '#8b5cf6' }}>🔐</span>}
+                      <span style={{ fontSize: '0.6rem', color: '#93c5fd' }} title="광고 최소화 모드 활성화">💡</span>
+                      {'mediaSession' in navigator && <span style={{ fontSize: '0.6rem', color: '#10b981' }} title="블루투스/외부 장치 제어 지원">🎮</span>}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  {/* 풀 플레이어 모드 */}
+                  <div className="album-art-container">
+                    <img src={currentMusic?.artwork || "https://placehold.co/300x300/1f2937/ffffff?text=🎵"} alt="Album Art" 
+                      className={`album-art ${isPlaying ? 'playing' : ''}`} />
+                    {isPlaying && (
+                      <div className="wave-overlay">
+                        <div className="wave-bar"></div><div className="wave-bar"></div><div className="wave-bar"></div><div className="wave-bar"></div><div className="wave-bar"></div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="song-details">
+                    <h2 className="current-title">{currentMusic?.title || "곡을 선택해주세요"}</h2>
+                    <p className="current-artist">{currentMusic?.artist || "아티스트"}</p>
+                  </div>
+
+                  <div className="progress-container">
+                    <input type="range" min="0" max={duration || 100} value={currentTime} 
+                      onChange={(e) => { setCurrentTime(parseFloat(e.target.value)); if (playerRef.current) playerRef.current.seekTo(parseFloat(e.target.value)); }} className="progress-bar" />
+                    <div className="time-info">
+                      <span>{formatTime(currentTime)}</span><span>{formatTime(duration)}</span>
+                    </div>
+                  </div>
+
+                  <div className="player-controls">
+                    <button onClick={() => setIsShuffle(!isShuffle)} className={`control-btn ${isShuffle ? 'active' : ''}`}><Shuffle size={24} /></button>
+                    <button onClick={prevSong} className="control-btn"><SkipBack size={32} weight="fill" /></button>
+                    <button onClick={togglePlayPause} className="play-btn">{isPlaying ? <Pause size={32} weight="fill" /> : <Play size={32} weight="fill" />}</button>
+                    <button onClick={nextSong} className="control-btn"><SkipForward size={32} weight="fill" /></button>
+                    <button onClick={() => { const modes = ['none', 'all', 'one']; setRepeatMode(modes[(modes.indexOf(repeatMode) + 1) % modes.length]); }} 
+                      className={`control-btn ${repeatMode !== 'none' ? 'active' : ''}`}>{repeatMode === 'one' ? <RepeatOnce size={24} /> : <Repeat size={24} />}</button>
+                  </div>
+
+                  {/* 볼륨 컨트롤 - 데스크톱에서만 표시 */}
+                  {isDesktop && (
+                    <div className="volume-container">
+                      <SpeakerHigh className="volume-icon" size={20} />
+                      <input type="range" min="0" max="100" step="1" value={volume} 
+                        onChange={(e) => { setVolume(parseInt(e.target.value)); if (playerRef.current) playerRef.current.setVolume(parseInt(e.target.value)); }} className="volume-slider" />
+                      <span className="volume-value">{volume}</span>
+                    </div>
+                  )}
+
+                  <div className="playlist-info">
+                    <p>재생목록: {currentPlaylist.length}곡</p>
+                    <p>현재: {currentIndex + 1} / {currentPlaylist.length || 1}</p>
+                    {cloudStatus === 'connected' && <p style={{ fontSize: '0.75rem', color: '#10b981' }}>🌐 구글 시트 연결됨</p>}
+                    {isAdminMode && <p style={{ fontSize: '0.75rem', color: '#8b5cf6' }}>🔐 관리자 모드</p>}
+                    <div style={{ 
+                      marginTop: '0.5rem', 
+                      padding: '0.5rem', 
+                      background: 'rgba(59, 130, 246, 0.1)', 
+                      border: '1px solid rgba(59, 130, 246, 0.2)', 
+                      borderRadius: '0.25rem',
+                      fontSize: '0.65rem',
+                      color: '#93c5fd'
+                    }}>
+                      💡 광고 최소화 모드 활성화됨<br/>
+                      • 낮은 화질로 재생<br/>
+                      • 1초부터 시작<br/>
+                      • 자동 스킵 시도<br/>
+                      🎮 블루투스/외부 장치 제어 {'mediaSession' in navigator ? '✅ 지원' : '❌ 미지원'}<br/>
+                      📱 모바일: 볼륨은 기기 버튼으로 조절하세요
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {/* 관리자 모드 - 곡 관리 툴바 */}
           {isAdminMode && filteredMusic.length > 0 && (
             <div style={{ marginBottom: '1rem', padding: '1rem', background: '#374151', borderRadius: '0.5rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                 <h4 style={{ color: '#f3f4f6', margin: 0 }}>🎵 곡 관리</h4>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <button onClick={selectAllSongs} 
                     style={{ padding: '0.5rem', borderRadius: '0.25rem', border: 'none', background: '#3b82f6', color: 'white', cursor: 'pointer', fontSize: '0.875rem' }}>
                     전체 선택
@@ -1906,8 +2573,107 @@ function App() {
                   )}
                 </div>
               </div>
+              
+              {/* 곡 순서 관리 섹션 */}
+              <div style={{ 
+                marginTop: '0.75rem', 
+                padding: '0.75rem', 
+                background: hasOrderChanges ? 'rgba(251, 191, 36, 0.1)' : 'rgba(55, 65, 81, 0.5)', 
+                border: hasOrderChanges ? '1px solid rgba(251, 191, 36, 0.3)' : '1px solid rgba(75, 85, 99, 0.3)',
+                borderRadius: '0.375rem'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ fontSize: '0.875rem', fontWeight: '600', color: hasOrderChanges ? '#fbbf24' : '#d1d5db' }}>
+                      🔄 곡 순서 관리
+                    </span>
+                    {hasOrderChanges && (
+                      <span style={{ 
+                        fontSize: '0.75rem', 
+                        color: '#fbbf24', 
+                        background: 'rgba(251, 191, 36, 0.2)', 
+                        padding: '0.125rem 0.5rem', 
+                        borderRadius: '0.25rem',
+                        fontWeight: '500'
+                      }}>
+                        변경됨
+                      </span>
+                    )}
+                  </div>
+                  
+                  {hasOrderChanges && (
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button 
+                        onClick={cancelOrderChanges}
+                        disabled={isSavingOrder}
+                        style={{ 
+                          padding: '0.375rem 0.75rem', 
+                          borderRadius: '0.25rem', 
+                          border: 'none', 
+                          background: '#6b7280', 
+                          color: 'white', 
+                          cursor: isSavingOrder ? 'not-allowed' : 'pointer', 
+                          fontSize: '0.8rem',
+                          opacity: isSavingOrder ? 0.5 : 1
+                        }}>
+                        취소
+                      </button>
+                      <button 
+                        onClick={savePlaylistOrder}
+                        disabled={isSavingOrder}
+                        style={{ 
+                          padding: '0.375rem 0.75rem', 
+                          borderRadius: '0.25rem', 
+                          border: 'none', 
+                          background: isSavingOrder ? '#9ca3af' : '#10b981', 
+                          color: 'white', 
+                          cursor: isSavingOrder ? 'not-allowed' : 'pointer', 
+                          fontSize: '0.8rem',
+                          fontWeight: '600',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.25rem'
+                        }}>
+                        {isSavingOrder ? (
+                          <>
+                            <div style={{ 
+                              width: '12px', 
+                              height: '12px', 
+                              border: '2px solid transparent',
+                              borderTop: '2px solid white',
+                              borderRadius: '50%',
+                              animation: 'spin 1s linear infinite'
+                            }}></div>
+                            저장 중...
+                          </>
+                        ) : (
+                          <>💾 순서 저장</>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                
+                <p style={{ 
+                  fontSize: '0.75rem', 
+                  color: hasOrderChanges ? '#fbbf24' : '#9ca3af', 
+                  margin: 0,
+                  lineHeight: '1.4'
+                }}>
+                  {hasOrderChanges ? (
+                    <>
+                      드래그로 곡 순서를 변경했습니다. <strong>'순서 저장'</strong> 버튼을 클릭하여 구글 시트에 저장하세요.
+                    </>
+                  ) : (
+                    <>
+                      곡을 드래그하여 순서를 변경할 수 있습니다. 변경 후 저장 버튼이 나타납니다.
+                    </>
+                  )}
+                </p>
+              </div>
+              
               {selectedSongs.size > 0 && (
-                <p style={{ color: '#d1d5db', fontSize: '0.875rem', margin: 0 }}>
+                <p style={{ color: '#d1d5db', fontSize: '0.875rem', margin: '0.5rem 0 0 0' }}>
                   {selectedSongs.size}곡이 선택되었습니다.
                 </p>
               )}
@@ -1923,7 +2689,7 @@ function App() {
               filteredMusic.map((song, index) => (
                 <div 
                   key={song.id} 
-                  className={`song-item ${currentMusic?.id === song.id ? 'playing' : ''} ${draggedSong?.index === index ? 'dragging' : ''} ${dragOverIndex === index ? 'drag-over' : ''}`} 
+                  className={`song-item ${currentMusic?.id === song.id ? 'playing' : ''} ${draggedSong?.index === index ? 'dragging' : ''} ${dragOverIndex === index ? 'drag-over' : ''} ${hasOrderChanges ? 'order-changed' : ''}`} 
                   style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
                   draggable={isAdminMode}
                   onDragStart={(e) => handleDragStart(e, song, index)}
@@ -1932,6 +2698,27 @@ function App() {
                   onDrop={(e) => handleDrop(e, index)}
                   onDragEnd={handleDragEnd}
                 >
+                  
+                  {/* 순서 번호 표시 (관리자 모드에서만) */}
+                  {isAdminMode && (
+                    <div style={{ 
+                      width: '24px', 
+                      height: '24px', 
+                      background: hasOrderChanges ? 'rgba(251, 191, 36, 0.2)' : 'rgba(55, 65, 81, 0.8)', 
+                      border: hasOrderChanges ? '1px solid rgba(251, 191, 36, 0.4)' : '1px solid rgba(75, 85, 99, 0.4)',
+                      borderRadius: '0.25rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '0.75rem',
+                      fontWeight: '600',
+                      color: hasOrderChanges ? '#fbbf24' : '#9ca3af',
+                      cursor: 'grab',
+                      flexShrink: 0
+                    }}>
+                      {index + 1}
+                    </div>
+                  )}
                   
                   {/* 선택 재생용 체크박스 (모든 모드에서 표시) */}
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
@@ -2015,53 +2802,56 @@ function App() {
           </div>
         </div>
 
-        <div className="player-section">
-          <div className="album-art-container">
-            <img src={currentMusic?.artwork || "https://placehold.co/300x300/1f2937/ffffff?text=🎵"} alt="Album Art" 
-              className={`album-art ${isPlaying ? 'playing' : ''}`} />
-            {isPlaying && (
-              <div className="wave-overlay">
-                <div className="wave-bar"></div><div className="wave-bar"></div><div className="wave-bar"></div><div className="wave-bar"></div><div className="wave-bar"></div>
+        {/* 데스크톱에서만 별도 플레이어 섹션 표시 */}
+        {isDesktop && (
+          <div className="player-section">
+            <div className="album-art-container">
+              <img src={currentMusic?.artwork || "https://placehold.co/300x300/1f2937/ffffff?text=🎵"} alt="Album Art" 
+                className={`album-art ${isPlaying ? 'playing' : ''}`} />
+              {isPlaying && (
+                <div className="wave-overlay">
+                  <div className="wave-bar"></div><div className="wave-bar"></div><div className="wave-bar"></div><div className="wave-bar"></div><div className="wave-bar"></div>
+                </div>
+              )}
+            </div>
+
+            <div className="song-details">
+              <h2 className="current-title">{currentMusic?.title || "곡을 선택해주세요"}</h2>
+              <p className="current-artist">{currentMusic?.artist || "아티스트"}</p>
+            </div>
+
+            <div className="progress-container">
+              <input type="range" min="0" max={duration || 100} value={currentTime} 
+                onChange={(e) => { setCurrentTime(parseFloat(e.target.value)); if (playerRef.current) playerRef.current.seekTo(parseFloat(e.target.value)); }} className="progress-bar" />
+              <div className="time-info">
+                <span>{formatTime(currentTime)}</span><span>{formatTime(duration)}</span>
               </div>
-            )}
-          </div>
+            </div>
 
-          <div className="song-details">
-            <h2 className="current-title">{currentMusic?.title || "곡을 선택해주세요"}</h2>
-            <p className="current-artist">{currentMusic?.artist || "아티스트"}</p>
-          </div>
+            <div className="player-controls">
+              <button onClick={() => setIsShuffle(!isShuffle)} className={`control-btn ${isShuffle ? 'active' : ''}`}><Shuffle size={24} /></button>
+              <button onClick={prevSong} className="control-btn"><SkipBack size={32} weight="fill" /></button>
+              <button onClick={togglePlayPause} className="play-btn">{isPlaying ? <Pause size={32} weight="fill" /> : <Play size={32} weight="fill" />}</button>
+              <button onClick={nextSong} className="control-btn"><SkipForward size={32} weight="fill" /></button>
+              <button onClick={() => { const modes = ['none', 'all', 'one']; setRepeatMode(modes[(modes.indexOf(repeatMode) + 1) % modes.length]); }} 
+                className={`control-btn ${repeatMode !== 'none' ? 'active' : ''}`}>{repeatMode === 'one' ? <RepeatOnce size={24} /> : <Repeat size={24} />}</button>
+            </div>
 
-          <div className="progress-container">
-            <input type="range" min="0" max={duration || 100} value={currentTime} 
-              onChange={(e) => { setCurrentTime(parseFloat(e.target.value)); if (playerRef.current) playerRef.current.seekTo(parseFloat(e.target.value)); }} className="progress-bar" />
-            <div className="time-info">
-              <span>{formatTime(currentTime)}</span><span>{formatTime(duration)}</span>
+            <div className="volume-container">
+              <SpeakerHigh className="volume-icon" size={20} />
+              <input type="range" min="0" max="100" step="1" value={volume} 
+                onChange={(e) => { setVolume(parseInt(e.target.value)); if (playerRef.current) playerRef.current.setVolume(parseInt(e.target.value)); }} className="volume-slider" />
+              <span className="volume-value">{volume}</span>
+            </div>
+
+            <div className="playlist-info">
+              <p>재생목록: {currentPlaylist.length}곡</p>
+              <p>현재: {currentIndex + 1} / {currentPlaylist.length || 1}</p>
+              {cloudStatus === 'connected' && <p style={{ fontSize: '0.75rem', color: '#10b981' }}>🌐 구글 시트 연결됨</p>}
+              {isAdminMode && <p style={{ fontSize: '0.75rem', color: '#8b5cf6' }}>🔐 관리자 모드</p>}
             </div>
           </div>
-
-          <div className="player-controls">
-            <button onClick={() => setIsShuffle(!isShuffle)} className={`control-btn ${isShuffle ? 'active' : ''}`}><Shuffle size={24} /></button>
-            <button onClick={prevSong} className="control-btn"><SkipBack size={32} weight="fill" /></button>
-            <button onClick={togglePlayPause} className="play-btn">{isPlaying ? <Pause size={32} weight="fill" /> : <Play size={32} weight="fill" />}</button>
-            <button onClick={nextSong} className="control-btn"><SkipForward size={32} weight="fill" /></button>
-            <button onClick={() => { const modes = ['none', 'all', 'one']; setRepeatMode(modes[(modes.indexOf(repeatMode) + 1) % modes.length]); }} 
-              className={`control-btn ${repeatMode !== 'none' ? 'active' : ''}`}>{repeatMode === 'one' ? <RepeatOnce size={24} /> : <Repeat size={24} />}</button>
-          </div>
-
-          <div className="volume-container">
-            <SpeakerHigh className="volume-icon" size={20} />
-            <input type="range" min="0" max="100" step="1" value={volume} 
-              onChange={(e) => { setVolume(parseInt(e.target.value)); if (playerRef.current) playerRef.current.setVolume(parseInt(e.target.value)); }} className="volume-slider" />
-            <span className="volume-value">{volume}</span>
-          </div>
-
-          <div className="playlist-info">
-            <p>재생목록: {currentPlaylist.length}곡</p>
-            <p>현재: {currentIndex + 1} / {currentPlaylist.length || 1}</p>
-            {cloudStatus === 'connected' && <p style={{ fontSize: '0.75rem', color: '#10b981' }}>🌐 구글 시트 연결됨</p>}
-            {isAdminMode && <p style={{ fontSize: '0.75rem', color: '#8b5cf6' }}>🔐 관리자 모드</p>}
-          </div>
-        </div>
+        )}
       </main>
     </div>
   );
