@@ -21,53 +21,53 @@ export default defineConfig({
         start_url: '/family-music-app/',
         icons: [
           {
-            src: 'icon-16x16.png',
+            src: '/family-music-app/icon-16x16.png',
             sizes: '16x16',
             type: 'image/png'
           },
           {
-            src: 'icon-32x32.png',
+            src: '/family-music-app/icon-32x32.png',
             sizes: '32x32',
             type: 'image/png'
           },
           {
-            src: 'icon-48x48.png',
+            src: '/family-music-app/icon-48x48.png',
             sizes: '48x48',
             type: 'image/png',
             purpose: 'any maskable'
           },
           {
-            src: 'icon-72x72.png',
+            src: '/family-music-app/icon-72x72.png',
             sizes: '72x72',
             type: 'image/png',
             purpose: 'any maskable'
           },
           {
-            src: 'icon-96x96.png',
+            src: '/family-music-app/icon-96x96.png',
             sizes: '96x96',
             type: 'image/png',
             purpose: 'any maskable'
           },
           {
-            src: 'icon-144x144.png',
+            src: '/family-music-app/icon-144x144.png',
             sizes: '144x144',
             type: 'image/png',
             purpose: 'any maskable'
           },
           {
-            src: 'icon-192x192.png',
+            src: '/family-music-app/icon-192x192.png',
             sizes: '192x192',
             type: 'image/png',
             purpose: 'any maskable'
           },
           {
-            src: 'icon-512x512.png',
+            src: '/family-music-app/icon-512x512.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable'
           },
           {
-            src: 'apple-touch-icon.png',
+            src: '/family-music-app/apple-touch-icon.png',
             sizes: '180x180',
             type: 'image/png'
           }
