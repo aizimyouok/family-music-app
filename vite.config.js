@@ -8,7 +8,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icon-*.png'],
       manifest: {
         name: '🎵 Music Hub - 가족 음악 앱',
         short_name: 'Music Hub',
@@ -21,10 +21,50 @@ export default defineConfig({
         start_url: '/family-music-app/',
         icons: [
           {
-            src: 'icon.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
-            purpose: 'any maskable'
+            src: 'icon-16x16.png',
+            sizes: '16x16',
+            type: 'image/png'
+          },
+          {
+            src: 'icon-32x32.png',
+            sizes: '32x32',
+            type: 'image/png'
+          },
+          {
+            src: 'icon-48x48.png',
+            sizes: '48x48',
+            type: 'image/png'
+          },
+          {
+            src: 'icon-72x72.png',
+            sizes: '72x72',
+            type: 'image/png'
+          },
+          {
+            src: 'icon-96x96.png',
+            sizes: '96x96',
+            type: 'image/png'
+          },
+          {
+            src: 'icon-144x144.png',
+            sizes: '144x144',
+            type: 'image/png'
+          },
+          {
+            src: 'icon-192x192.png',
+            sizes: '192x192',
+            type: 'image/png'
+          },
+          {
+            src: 'icon-512x512.png',
+            sizes: '512x512',
+            type: 'image/png'
+          },
+          {
+            src: 'apple-touch-icon.png',
+            sizes: '180x180',
+            type: 'image/png',
+            purpose: 'apple-touch-icon'
           }
         ]
       },
